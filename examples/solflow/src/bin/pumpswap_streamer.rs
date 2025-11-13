@@ -10,10 +10,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let output_path = match backend {
         BackendType::Sqlite => std::env::var("SOLFLOW_DB_PATH")
-            .unwrap_or_else(|_| "data/solflow.db".to_string()),
+            .unwrap_or_else(|_| "/var/lib/solflow/solflow.db".to_string()),
         BackendType::Jsonl => std::env::var("PUMPSWAP_OUTPUT_PATH")
             .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
     };
+    
+    if backend == BackendType::Sqlite {
+        log::info!("💾 SQLite backend using: {}", output_path);
+    }
 
     let config = StreamerConfig {
         program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),

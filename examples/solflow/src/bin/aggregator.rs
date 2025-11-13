@@ -13,7 +13,7 @@
 //! - PUMPSWAP_STREAM_PATH - Path to PumpSwap JSONL stream (default: streams/pumpswap/events.jsonl)
 //! - JUPITER_DCA_STREAM_PATH - Path to Jupiter DCA JSONL stream (default: streams/jupiter_dca/events.jsonl)
 //! - AGGREGATES_OUTPUT_PATH - Output directory for enriched metrics (default: streams/aggregates)
-//! - SOLFLOW_DB_PATH - SQLite database path (default: data/solflow.db) - used when --backend sqlite
+//! - SOLFLOW_DB_PATH - SQLite database path (default: /var/lib/solflow/solflow.db) - used when --backend sqlite
 //! - CORRELATION_WINDOW_SECS - Time window for DCA correlation in seconds (default: 60)
 //! - UPTREND_THRESHOLD - Uptrend score threshold (default: 0.7)
 //! - ACCUMULATION_THRESHOLD - DCA overlap percentage threshold (default: 25.0)
@@ -62,7 +62,7 @@ impl AggregatorConfig {
         
         // Input source is always SQLite now
         let db_path: PathBuf = std::env::var("SOLFLOW_DB_PATH")
-            .unwrap_or_else(|_| "data/solflow.db".to_string())
+            .unwrap_or_else(|_| "/var/lib/solflow/solflow.db".to_string())
             .into();
         
         // Output destination depends on backend flag
@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AggregatorConfig::from_env()?;
 
     log::info!("🚀 Starting Aggregator Enrichment System");
-    log::info!("   Input source: {} (SQLite)", config.db_path.display());
+    log::info!("💾 SQLite backend using: {}", config.db_path.display());
     log::info!("   Output destination: {}", config.output_path.display());
     log::info!("   Poll interval: {}ms", config.poll_interval_ms);
     log::info!("   Correlation window: {}s", config.correlation_window_secs);

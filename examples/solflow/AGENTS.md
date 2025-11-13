@@ -160,7 +160,7 @@ Yellowstone gRPC Stream
     ↓
 PumpSwap/BonkSwap/Moonshot/JupiterDCA Streamers
     ↓
-SQLite Database (data/solflow.db - unified trades table)
+SQLite Database (/var/lib/solflow/solflow.db - unified trades table)
     ↓
 Aggregator (SqliteTradeReader - incremental cursor)
     ↓
@@ -555,7 +555,7 @@ tail -f streams/aggregates/1h.jsonl | jq 'select(.signal != null)'
 ```
 
 **Environment Variables:**
-- `SOLFLOW_DB_PATH` - SQLite database path for input (default: data/solflow.db)
+- `SOLFLOW_DB_PATH` - SQLite database path for input (default: /var/lib/solflow/solflow.db)
 - `AGGREGATES_OUTPUT_PATH` - Output directory for JSONL backend (default: streams/aggregates)
 - `AGGREGATOR_POLL_INTERVAL_MS` - SQLite poll frequency in milliseconds (default: 500)
 - `CORRELATION_WINDOW_SECS` - Time window for correlation (default: 60)

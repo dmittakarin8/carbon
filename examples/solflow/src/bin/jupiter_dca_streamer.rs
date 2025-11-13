@@ -29,10 +29,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let output_path = match backend {
         BackendType::Sqlite => std::env::var("SOLFLOW_DB_PATH")
-            .unwrap_or_else(|_| "data/solflow.db".to_string()),
+            .unwrap_or_else(|_| "/var/lib/solflow/solflow.db".to_string()),
         BackendType::Jsonl => std::env::var("JUPITER_DCA_OUTPUT_PATH")
             .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string()),
     };
+    
+    if backend == BackendType::Sqlite {
+        log::info!("💾 SQLite backend using: {}", output_path);
+    }
 
     let config = StreamerConfig {
         program_id: "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M".to_string(),

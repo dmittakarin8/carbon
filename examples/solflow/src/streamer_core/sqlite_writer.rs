@@ -17,6 +17,16 @@ pub struct SqliteWriter {
 
 impl SqliteWriter {
     pub fn new(db_path: impl AsRef<Path>) -> Result<Self, WriterError> {
+        // Ensure parent directory exists
+        if let Some(parent) = db_path.as_ref().parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                WriterError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create database directory {}: {}", parent.display(), e),
+                ))
+            })?;
+        }
+        
         let conn = Connection::open(db_path)?;
         
         // Enable WAL mode for concurrent reads
