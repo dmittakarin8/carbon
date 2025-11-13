@@ -22,7 +22,7 @@
 
 use solflow::aggregator_core::{
     AggregatorWriter, CorrelationEngine, EnrichedMetrics, SignalDetector, SignalScorer,
-    TailReader, TimeWindowAggregator, Trade, TradeAction,
+    SqliteTradeReader, TimeWindowAggregator, Trade, TradeAction,
 };
 use solflow::streamer_core::config::BackendType;
 use chrono::Utc;
@@ -47,9 +47,9 @@ fn parse_backend_from_args() -> BackendType {
 #[derive(Debug)]
 struct AggregatorConfig {
     backend: BackendType,
-    pumpswap_path: PathBuf,
-    jupiter_dca_path: PathBuf,
+    db_path: PathBuf,
     output_path: PathBuf,
+    poll_interval_ms: u64,
     correlation_window_secs: i64,
     uptrend_threshold: f64,
     accumulation_threshold: f64,
@@ -60,22 +60,29 @@ impl AggregatorConfig {
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let backend = parse_backend_from_args();
         
-        let output_path = match backend {
-            BackendType::Sqlite => std::env::var("SOLFLOW_DB_PATH")
-                .unwrap_or_else(|_| "data/solflow.db".to_string()),
+        // Input source is always SQLite now
+        let db_path: PathBuf = std::env::var("SOLFLOW_DB_PATH")
+            .unwrap_or_else(|_| "data/solflow.db".to_string())
+            .into();
+        
+        // Output destination depends on backend flag
+        let output_path: PathBuf = match backend {
+            BackendType::Sqlite => db_path.clone(),
             BackendType::Jsonl => std::env::var("AGGREGATES_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/aggregates".to_string()),
+                .unwrap_or_else(|_| "streams/aggregates".to_string())
+                .into(),
         };
+        
+        let poll_interval_ms = std::env::var("AGGREGATOR_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(500);
         
         Ok(Self {
             backend,
-            pumpswap_path: std::env::var("PUMPSWAP_STREAM_PATH")
-                .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string())
-                .into(),
-            jupiter_dca_path: std::env::var("JUPITER_DCA_STREAM_PATH")
-                .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string())
-                .into(),
-            output_path: output_path.into(),
+            db_path,
+            output_path,
+            poll_interval_ms,
             correlation_window_secs: std::env::var("CORRELATION_WINDOW_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -107,9 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AggregatorConfig::from_env()?;
 
     log::info!("🚀 Starting Aggregator Enrichment System");
-    log::info!("   PumpSwap stream: {}", config.pumpswap_path.display());
-    log::info!("   Jupiter DCA stream: {}", config.jupiter_dca_path.display());
-    log::info!("   Output: {}", config.output_path.display());
+    log::info!("   Input source: {} (SQLite)", config.db_path.display());
+    log::info!("   Output destination: {}", config.output_path.display());
+    log::info!("   Poll interval: {}ms", config.poll_interval_ms);
     log::info!("   Correlation window: {}s", config.correlation_window_secs);
     log::info!("   Uptrend threshold: {}", config.uptrend_threshold);
     log::info!(
@@ -119,22 +126,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("   Emission interval: {}s", config.emission_interval_secs);
 
     // Initialize components
-    let mut pumpswap_reader = TailReader::new(config.pumpswap_path.clone());
-    let mut jupiter_dca_reader = TailReader::new(config.jupiter_dca_path.clone());
+    let mut sqlite_reader = SqliteTradeReader::with_poll_interval(
+        config.db_path.clone(),
+        Duration::from_millis(config.poll_interval_ms),
+    ).map_err(|e| format!("Failed to initialize SQLite reader: {}", e))?;
+    
     let mut aggregator = TimeWindowAggregator::new();
     let correlator = CorrelationEngine::new(config.correlation_window_secs);
     let scorer = SignalScorer::new();
     let detector = SignalDetector::new(config.uptrend_threshold, config.accumulation_threshold);
     let mut writer = AggregatorWriter::new(config.backend, config.output_path.clone())?;
     
-    log::info!("📊 Backend: {}", writer.backend_type());
+    log::info!("📊 Input: SQLite | Output: {}", writer.backend_type());
 
-    // Start readers
-    log::info!("📖 Starting stream readers...");
-    pumpswap_reader.start().await?;
-    jupiter_dca_reader.start().await?;
-
-    // Create emission ticker
+    // Create tickers
+    let mut read_ticker = interval(sqlite_reader.poll_interval());
+    read_ticker.tick().await; // Skip first immediate tick
+    
     let mut emission_ticker = interval(Duration::from_secs(config.emission_interval_secs));
     emission_ticker.tick().await; // Skip first immediate tick
 
@@ -142,41 +150,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         tokio::select! {
-            // Read from PumpSwap stream
-            line_result = pumpswap_reader.read_line() => {
-                match line_result {
-                    Ok(Some(line)) => {
-                        if let Ok(trade) = Trade::from_jsonl(&line) {
-                            aggregator.add_trade(trade);
-                        } else {
-                            log::warn!("Failed to parse PumpSwap trade: {}", line);
+            // Read from SQLite database
+            _ = read_ticker.tick() => {
+                match sqlite_reader.read_new_trades() {
+                    Ok(trades) => {
+                        if !trades.is_empty() {
+                            log::debug!("📥 Read {} new trades from SQLite", trades.len());
+                            for trade in trades {
+                                aggregator.add_trade(trade);
+                            }
                         }
                     }
-                    Ok(None) => {
-                        // Should not happen with read_line implementation
-                    }
                     Err(e) => {
-                        log::error!("PumpSwap stream error: {}", e);
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    }
-                }
-            }
-
-            // Read from Jupiter DCA stream
-            line_result = jupiter_dca_reader.read_line() => {
-                match line_result {
-                    Ok(Some(line)) => {
-                        if let Ok(trade) = Trade::from_jsonl(&line) {
-                            aggregator.add_trade(trade);
-                        } else {
-                            log::warn!("Failed to parse Jupiter DCA trade: {}", line);
-                        }
-                    }
-                    Ok(None) => {
-                        // Should not happen
-                    }
-                    Err(e) => {
-                        log::error!("Jupiter DCA stream error: {}", e);
+                        log::error!("SQLite read error: {}", e);
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
                 }

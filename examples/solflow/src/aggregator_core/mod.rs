@@ -1,12 +1,12 @@
 //! Aggregator Core - Multi-Stream Correlation Engine
 //!
-//! This module provides the infrastructure for correlating multiple JSONL trade streams
+//! This module provides the infrastructure for correlating multiple trade streams
 //! (PumpSwap, BonkSwap, Jupiter DCA, etc.) to detect accumulation patterns and uptrend signals.
 //!
 //! # Architecture
 //!
 //! ```text
-//! JSONL Streams → TailReader → Normalizer → TimeWindowAggregator
+//! SQLite Database → SqliteTradeReader → TimeWindowAggregator
 //!     ↓
 //! CorrelationEngine (mint + ±60s timestamp join)
 //!     ↓
@@ -20,7 +20,7 @@
 pub mod correlator;
 pub mod detector;
 pub mod normalizer;
-pub mod reader;
+pub mod sqlite_reader;
 pub mod scorer;
 pub mod window;
 pub mod writer_backend;
@@ -31,7 +31,7 @@ pub mod writer;
 pub use correlator::CorrelationEngine;
 pub use detector::SignalDetector;
 pub use normalizer::{Trade, TradeAction};
-pub use reader::TailReader;
+pub use sqlite_reader::SqliteTradeReader;
 pub use scorer::SignalScorer;
 pub use window::{TimeWindowAggregator, WindowMetrics, WindowSize};
 pub use writer_backend::{AggregatorWriterBackend, AggregatorWriterError};
