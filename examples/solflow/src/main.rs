@@ -7,6 +7,7 @@ mod config;
 mod empty_decoder;
 mod persistence;
 mod state;
+pub mod sqlite_pragma;
 mod trade_extractor;
 mod ui;
 

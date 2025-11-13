@@ -4,6 +4,7 @@
 //! Uses ID-based cursor to incrementally read new trades from the unified trades table.
 
 use super::normalizer::{Trade, TradeAction};
+use crate::sqlite_pragma::apply_optimized_pragmas;
 use rusqlite::Connection;
 use std::path::Path;
 use std::time::Duration;
@@ -48,7 +49,11 @@ impl SqliteTradeReader {
     pub fn new(db_path: impl AsRef<Path>) -> Result<Self, ReaderError> {
         let conn = Connection::open(db_path)?;
         
-        // Enable read-only mode to prevent write locks
+        // Apply optimized PRAGMAs (WAL, NORMAL, MEMORY, mmap, cache, autocheckpoint)
+        apply_optimized_pragmas(&conn)
+            .map_err(ReaderError::Database)?;
+        
+        // Enable read-only mode to prevent write locks (must be after PRAGMAs)
         conn.execute("PRAGMA query_only = ON", [])?;
         
         // Initialize cursor from highest existing id

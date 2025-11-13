@@ -3,6 +3,7 @@ use crate::streamer_core::{
     output_writer::TradeEvent,
     writer_backend::{WriterBackend, WriterError}
 };
+use crate::sqlite_pragma::apply_optimized_pragmas;
 use async_trait::async_trait;
 use std::path::Path;
 use std::time::Instant;
@@ -29,13 +30,9 @@ impl SqliteWriter {
         
         let conn = Connection::open(db_path)?;
         
-        // Enable WAL mode for concurrent reads
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
-        conn.execute_batch("PRAGMA synchronous=NORMAL;")?;
-        
-        // WAL checkpoint policy: auto-checkpoint every 1000 pages (~4MB)
-        // Prevents unbounded WAL growth while maintaining insert throughput
-        conn.execute_batch("PRAGMA wal_autocheckpoint=1000;")?;
+        // Apply optimized PRAGMAs (WAL, NORMAL, MEMORY, mmap, cache, autocheckpoint)
+        apply_optimized_pragmas(&conn)
+            .map_err(|e| WriterError::Database(e.to_string()))?;
         
         // Create table with optimized schema
         conn.execute(
