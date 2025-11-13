@@ -13,6 +13,7 @@
 //! - PUMPSWAP_STREAM_PATH - Path to PumpSwap JSONL stream (default: streams/pumpswap/events.jsonl)
 //! - JUPITER_DCA_STREAM_PATH - Path to Jupiter DCA JSONL stream (default: streams/jupiter_dca/events.jsonl)
 //! - AGGREGATES_OUTPUT_PATH - Output directory for enriched metrics (default: streams/aggregates)
+//! - SOLFLOW_DB_PATH - SQLite database path (default: data/solflow.db) - used when --backend sqlite
 //! - CORRELATION_WINDOW_SECS - Time window for DCA correlation in seconds (default: 60)
 //! - UPTREND_THRESHOLD - Uptrend score threshold (default: 0.7)
 //! - ACCUMULATION_THRESHOLD - DCA overlap percentage threshold (default: 25.0)
@@ -20,15 +21,32 @@
 //! - RUST_LOG - Logging level (optional, default: info)
 
 use carbon_terminal::aggregator_core::{
-    CorrelationEngine, EnrichedMetrics, EnrichedMetricsWriter, SignalDetector, SignalScorer,
+    AggregatorWriter, CorrelationEngine, EnrichedMetrics, SignalDetector, SignalScorer,
     TailReader, TimeWindowAggregator, Trade, TradeAction,
 };
+use carbon_terminal::streamer_core::config::BackendType;
 use chrono::Utc;
+use std::env;
 use std::path::PathBuf;
 use tokio::time::{interval, Duration};
 
+fn parse_backend_from_args() -> BackendType {
+    let args: Vec<String> = env::args().collect();
+    if args.contains(&"--backend".to_string()) {
+        if let Some(idx) = args.iter().position(|x| x == "--backend") {
+            match args.get(idx + 1).map(|s| s.as_str()) {
+                Some("sqlite") => return BackendType::Sqlite,
+                Some("jsonl") => return BackendType::Jsonl,
+                _ => {}
+            }
+        }
+    }
+    BackendType::Jsonl
+}
+
 #[derive(Debug)]
 struct AggregatorConfig {
+    backend: BackendType,
     pumpswap_path: PathBuf,
     jupiter_dca_path: PathBuf,
     output_path: PathBuf,
@@ -40,16 +58,24 @@ struct AggregatorConfig {
 
 impl AggregatorConfig {
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        let backend = parse_backend_from_args();
+        
+        let output_path = match backend {
+            BackendType::Sqlite => std::env::var("SOLFLOW_DB_PATH")
+                .unwrap_or_else(|_| "data/solflow.db".to_string()),
+            BackendType::Jsonl => std::env::var("AGGREGATES_OUTPUT_PATH")
+                .unwrap_or_else(|_| "streams/aggregates".to_string()),
+        };
+        
         Ok(Self {
+            backend,
             pumpswap_path: std::env::var("PUMPSWAP_STREAM_PATH")
                 .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string())
                 .into(),
             jupiter_dca_path: std::env::var("JUPITER_DCA_STREAM_PATH")
                 .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string())
                 .into(),
-            output_path: std::env::var("AGGREGATES_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/aggregates".to_string())
-                .into(),
+            output_path: output_path.into(),
             correlation_window_secs: std::env::var("CORRELATION_WINDOW_SECS")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -83,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("🚀 Starting Aggregator Enrichment System");
     log::info!("   PumpSwap stream: {}", config.pumpswap_path.display());
     log::info!("   Jupiter DCA stream: {}", config.jupiter_dca_path.display());
-    log::info!("   Output directory: {}", config.output_path.display());
+    log::info!("   Output: {}", config.output_path.display());
     log::info!("   Correlation window: {}s", config.correlation_window_secs);
     log::info!("   Uptrend threshold: {}", config.uptrend_threshold);
     log::info!(
@@ -99,7 +125,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let correlator = CorrelationEngine::new(config.correlation_window_secs);
     let scorer = SignalScorer::new();
     let detector = SignalDetector::new(config.uptrend_threshold, config.accumulation_threshold);
-    let mut writer = EnrichedMetricsWriter::new(config.output_path.clone())?;
+    let mut writer = AggregatorWriter::new(config.backend, config.output_path.clone())?;
+    
+    log::info!("📊 Backend: {}", writer.backend_type());
 
     // Start readers
     log::info!("📖 Starting stream readers...");
@@ -216,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         timestamp: current_timestamp,
                     };
 
-                    if let Err(e) = writer.write_metrics(&enriched) {
+                    if let Err(e) = writer.write_metrics(&enriched).await {
                         log::error!("Failed to write enriched metrics: {}", e);
                     }
 

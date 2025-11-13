@@ -1,83 +1,64 @@
-//! Enriched metrics writer - outputs aggregated signals to JSONL
+//! Unified writer interface for enriched metrics
+//!
+//! Routes writes to either JSONL or SQLite backend based on configuration.
 
-use super::window::WindowSize;
-use serde::Serialize;
-use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use super::jsonl_writer::EnrichedMetricsWriter;
+use super::sqlite_writer::SqliteAggregatorWriter;
+use super::writer_backend::{AggregatorWriterBackend, AggregatorWriterError};
+use crate::streamer_core::config::BackendType;
 use std::path::PathBuf;
-use std::time::Instant;
-use std::time::Duration;
-use std::collections::HashMap;
 
-#[derive(Debug, Serialize)]
-pub struct EnrichedMetrics {
-    pub mint: String,
-    pub window: String,
-    pub net_flow_sol: f64,
-    pub buy_sell_ratio: f64,
-    pub dca_overlap_pct: f64,
-    pub uptrend_score: f64,
-    pub signal: Option<String>,
-    pub timestamp: i64,
+// Re-export EnrichedMetrics from jsonl_writer
+pub use super::jsonl_writer::EnrichedMetrics;
+
+/// Unified writer that routes to either JSONL or SQLite backend
+pub enum AggregatorWriter {
+    Jsonl(EnrichedMetricsWriter),
+    Sqlite(SqliteAggregatorWriter),
 }
 
-pub struct EnrichedMetricsWriter {
-    writers: HashMap<WindowSize, BufWriter<std::fs::File>>,
-    last_flush: Instant,
-}
-
-impl EnrichedMetricsWriter {
-    pub fn new(base_path: PathBuf) -> std::io::Result<Self> {
-        let mut writers = HashMap::new();
-
-        for window in WindowSize::all() {
-            let filename = format!("{}.jsonl", window.as_str());
-            let file_path = base_path.join(filename);
-
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&file_path)?;
-
-            log::info!("📝 Writing enriched metrics to: {}", file_path.display());
-            writers.insert(window, BufWriter::new(file));
+impl AggregatorWriter {
+    /// Create a new aggregator writer based on backend type
+    pub fn new(backend: BackendType, base_path: PathBuf) -> Result<Self, AggregatorWriterError> {
+        match backend {
+            BackendType::Jsonl => {
+                let writer = EnrichedMetricsWriter::new(base_path)?;
+                Ok(AggregatorWriter::Jsonl(writer))
+            }
+            BackendType::Sqlite => {
+                let writer = SqliteAggregatorWriter::new(base_path)?;
+                Ok(AggregatorWriter::Sqlite(writer))
+            }
         }
-
-        Ok(Self {
-            writers,
-            last_flush: Instant::now(),
-        })
     }
-
-    pub fn write_metrics(&mut self, metrics: &EnrichedMetrics) -> std::io::Result<()> {
-        let window = WindowSize::from_str(&metrics.window)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "Invalid window size"))?;
-
-        let writer = self.writers.get_mut(&window)
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Writer not found"))?;
-
-        let json = serde_json::to_string(metrics)?;
-        writeln!(writer, "{}", json)?;
-
-        // Flush every 5 seconds
-        if self.last_flush.elapsed() > Duration::from_secs(5) {
-            self.flush()?;
-            self.last_flush = Instant::now();
+    
+    /// Write enriched metrics to the configured backend
+    pub async fn write_metrics(&mut self, metrics: &EnrichedMetrics) -> Result<(), AggregatorWriterError> {
+        match self {
+            AggregatorWriter::Jsonl(w) => {
+                w.write_metrics(metrics)?;
+                Ok(())
+            },
+            AggregatorWriter::Sqlite(w) => w.write_metrics(metrics).await,
         }
-
-        Ok(())
     }
-
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        for writer in self.writers.values_mut() {
-            writer.flush()?;
+    
+    /// Flush pending writes to storage
+    pub async fn flush(&mut self) -> Result<(), AggregatorWriterError> {
+        match self {
+            AggregatorWriter::Jsonl(w) => {
+                w.flush()?;
+                Ok(())
+            },
+            AggregatorWriter::Sqlite(w) => w.flush().await,
         }
-        Ok(())
     }
-}
-
-impl Drop for EnrichedMetricsWriter {
-    fn drop(&mut self) {
-        let _ = self.flush();
+    
+    /// Get backend type for logging
+    pub fn backend_type(&self) -> &'static str {
+        match self {
+            AggregatorWriter::Jsonl(_) => "JSONL",
+            AggregatorWriter::Sqlite(_) => "SQLite",
+        }
     }
 }

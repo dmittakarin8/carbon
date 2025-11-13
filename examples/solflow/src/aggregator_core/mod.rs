@@ -14,7 +14,7 @@
 //!     ↓
 //! SignalDetector (UPTREND, ACCUMULATION thresholds)
 //!     ↓
-//! EnrichedMetricsWriter → /streams/aggregates/{15m,1h,2h,4h}.jsonl
+//! AggregatorWriter → JSONL or SQLite backend
 //! ```
 
 pub mod correlator;
@@ -23,6 +23,9 @@ pub mod normalizer;
 pub mod reader;
 pub mod scorer;
 pub mod window;
+pub mod writer_backend;
+pub mod jsonl_writer;
+pub mod sqlite_writer;
 pub mod writer;
 
 pub use correlator::CorrelationEngine;
@@ -31,4 +34,7 @@ pub use normalizer::{Trade, TradeAction};
 pub use reader::TailReader;
 pub use scorer::SignalScorer;
 pub use window::{TimeWindowAggregator, WindowMetrics, WindowSize};
-pub use writer::{EnrichedMetrics, EnrichedMetricsWriter};
+pub use writer_backend::{AggregatorWriterBackend, AggregatorWriterError};
+pub use jsonl_writer::EnrichedMetricsWriter;
+pub use sqlite_writer::SqliteAggregatorWriter;
+pub use writer::{AggregatorWriter, EnrichedMetrics};
