@@ -28,3 +28,39 @@ log.log
 *.db-wal
 trades.json
 
+# ──────────────────────────────
+# Build & Dependency Artifacts
+/target/
+/Cargo.lock
+
+# IDE / Tooling
+.vscode/
+.idea/
+.DS_Store
+
+# ──────────────────────────────
+# Runtime Directories (Streamers & Aggregator)
+streams/
+data/
+logs/
+tmp/
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+
+# JSONL output and intermediate aggregates
+*.jsonl
+*.json
+*.log
+
+# Temporary checkpoints / testing artifacts
+*.bak
+*.tmp
+*.old
+
+# System / OS metadata
+Thumbs.db
+ehthumbs.db
+desktop.ini
