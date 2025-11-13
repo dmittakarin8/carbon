@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+pub mod aggregator_core;
 mod aggregator;
 mod config;
 mod empty_decoder;
@@ -8,6 +9,8 @@ mod persistence;
 mod state;
 mod trade_extractor;
 mod ui;
+
+pub mod streamer_core;
 
 use {
     async_trait::async_trait,
@@ -123,6 +126,7 @@ pub async fn main() -> CarbonResult<()> {
         transaction_filters,
         Default::default(),
         Arc::new(RwLock::new(std::collections::HashSet::new())),
+        Default::default(),
     );
     
     // Create processor with channel sender
