@@ -1,0 +1,37 @@
+[package]
+name = "carbon-terminal"
+version = "0.1.0"
+edition = { workspace = true }
+
+[dependencies]
+carbon-core = { workspace = true }
+carbon-log-metrics = { workspace = true }
+carbon-yellowstone-grpc-datasource = { workspace = true }
+
+async-trait = { workspace = true }
+dotenv = { workspace = true }
+env_logger = { workspace = true }
+hex = "0.4"
+log = { workspace = true }
+ratatui = "0.27"
+crossterm = "0.28"
+chrono = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+solana-account-decoder-client-types = "2.2"
+solana-instruction = "2.2"
+solana-pubkey = { workspace = true }
+solana-signature = { workspace = true }
+solana-transaction-status = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+yellowstone-grpc-proto = { workspace = true }
+
+[[bin]]
+name = "grpc_verify"
+path = "src/bin/grpc_verify.rs"
+
+[dependencies.rustls]
+default-features = false
+features = ["std", "aws_lc_rs"]
+version = "0.23.0"
+

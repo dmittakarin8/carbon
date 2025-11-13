@@ -1,0 +1,30 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+log.log
+
+# Data files
+*.db
+*.db-shm
+*.db-wal
+trades.json
+
