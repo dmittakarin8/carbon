@@ -1,6 +1,5 @@
 use {
     carbon_core::transaction::TransactionMetadata,
-    solana_account_decoder_client_types::token::UiTokenAmount,
     solana_pubkey::Pubkey,
     solana_transaction_status::TransactionStatusMeta,
     std::sync::Arc,
@@ -170,11 +169,16 @@ pub fn extract_token_changes(
             .iter()
             .find(|p| p.account_index == pre.account_index);
 
-        let (pre_raw, pre_ui, decimals) = extract_token_amount(&pre.ui_token_amount);
-
-        let (post_raw, post_ui, _) = match post {
-            Some(p) => extract_token_amount(&p.ui_token_amount),
-            None => (0, 0.0, decimals), // Account closed
+        let pre_raw = pre.ui_token_amount.amount.parse::<u64>().unwrap_or(0);
+        let pre_ui = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
+        let decimals = pre.ui_token_amount.decimals;
+        
+        let (post_raw, post_ui) = match post {
+            Some(p) => (
+                p.ui_token_amount.amount.parse::<u64>().unwrap_or(0),
+                p.ui_token_amount.ui_amount.unwrap_or(0.0),
+            ),
+            None => (0, 0.0), // Account closed
         };
 
         let raw_change = (post_raw as i128) - (pre_raw as i128);
@@ -217,7 +221,9 @@ pub fn extract_token_changes(
             .any(|pre| pre.account_index == post.account_index);
 
         if !exists_in_pre {
-            let (post_raw, post_ui, decimals) = extract_token_amount(&post.ui_token_amount);
+            let post_raw = post.ui_token_amount.amount.parse::<u64>().unwrap_or(0);
+            let post_ui = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+            let decimals = post.ui_token_amount.decimals;
 
             if post_raw > 0 {
                 let account_index = post.account_index as usize;
@@ -239,14 +245,7 @@ pub fn extract_token_changes(
     deltas
 }
 
-/// Helper to extract raw amount, UI amount, and decimals from token amount
-fn extract_token_amount(ui_amount: &UiTokenAmount) -> (u64, f64, u8) {
-    let raw = ui_amount.amount.parse::<u64>().unwrap_or(0);
-    let ui = ui_amount.ui_amount.unwrap_or(0.0);
-    let decimals = ui_amount.decimals;
 
-    (raw, ui, decimals)
-}
 
 /// Find the primary user account (largest negative SOL change, typically index 0 or 1)
 /// 

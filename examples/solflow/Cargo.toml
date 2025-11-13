@@ -3,6 +3,10 @@ name = "carbon-terminal"
 version = "0.1.0"
 edition = { workspace = true }
 
+[lib]
+name = "carbon_terminal"
+path = "src/main.rs"
+
 [dependencies]
 carbon-core = { workspace = true }
 carbon-log-metrics = { workspace = true }
@@ -18,8 +22,8 @@ crossterm = "0.28"
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-solana-account-decoder-client-types = "2.2"
-solana-instruction = "2.2"
+solana-account-decoder-client-types = "3.0"
+solana-instruction = "3.0"
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true }
 solana-transaction-status = { workspace = true }
@@ -30,8 +34,35 @@ yellowstone-grpc-proto = { workspace = true }
 name = "grpc_verify"
 path = "src/bin/grpc_verify.rs"
 
+[[bin]]
+name = "pumpswap_streamer"
+path = "src/bin/pumpswap_streamer.rs"
+
+[[bin]]
+name = "bonkswap_streamer"
+path = "src/bin/bonkswap_streamer.rs"
+
+[[bin]]
+name = "moonshot_streamer"
+path = "src/bin/moonshot_streamer.rs"
+
+[[bin]]
+name = "jupiter_dca_streamer"
+path = "src/bin/jupiter_dca_streamer.rs"
+
+[[bin]]
+name = "aggregator"
+path = "src/bin/aggregator.rs"
+
 [dependencies.rustls]
 default-features = false
 features = ["std", "aws_lc_rs"]
 version = "0.23.0"
+
+[dependencies.rusqlite]
+version = "0.32"
+features = ["bundled"]
+
+[dev-dependencies]
+tempfile = "3.8"
 

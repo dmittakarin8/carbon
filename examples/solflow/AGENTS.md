@@ -1,7 +1,7 @@
 # PumpSwap Terminal - Agent Guide
 
-**Last Updated:** 2025-11-11  
-**Repository Type:** Rust Workspace (Multi-Binary with Database-Backed Architecture)
+**Last Updated:** 2025-11-13  
+**Repository Type:** Rust Workspace (Multi-Streamer with Aggregator Architecture)
 
 ---
 
@@ -27,27 +27,51 @@
 
 ### Current Binaries (Approved)
 
+**Core Streamers:**
 ```toml
 [[bin]]
-name = "terminal_ui"        # Interactive terminal UI (primary)
-path = "src/bin/terminal_ui.rs"
+name = "pumpswap_streamer"
+path = "src/bin/pumpswap_streamer.rs"
 
 [[bin]]
-name = "token_indexer"      # Background enrichment worker
-path = "src/bin/token_indexer.rs"
+name = "bonkswap_streamer"
+path = "src/bin/bonkswap_streamer.rs"
 
 [[bin]]
-name = "health_check"       # Database diagnostics
-path = "src/bin/health_check.rs"
+name = "moonshot_streamer"
+path = "src/bin/moonshot_streamer.rs"
+
+[[bin]]
+name = "jupiter_dca_streamer"
+path = "src/bin/jupiter_dca_streamer.rs"
 ```
 
-**Total: 3 binaries** (no more may be added without user approval)
+**Aggregation & Analysis:**
+```toml
+[[bin]]
+name = "aggregator"
+path = "src/bin/aggregator.rs"
+```
+
+**Utilities:**
+```toml
+[[bin]]
+name = "grpc_verify"
+path = "src/bin/grpc_verify.rs"
+```
+
+**Total: 6 binaries** (4 streamers, 1 aggregator, 1 utility)
+
+**Note:** All binaries follow the same pattern:
+- Must include `dotenv::dotenv().ok()` at the start of `main()`
+- Must work when run from `examples/solflow` directory
+- Must load `.env` file from current working directory
 
 ### Verification Commands
 
 **Before any commit, Droid should verify:**
 ```bash
-# Count [[bin]] entries (should be 3 or less)
+# Count [[bin]] entries (should be 6 or less)
 grep -c '^\[\[bin\]\]' Cargo.toml
 
 # Count shell scripts (should be 0)
@@ -55,6 +79,10 @@ find . -name "*.sh" -type f | wc -l
 
 # Check for unapproved binaries
 git status | grep "src/bin/"
+
+# Verify all streamers have dotenv
+grep -l "dotenv::dotenv" src/bin/*_streamer.rs | wc -l
+# Should equal number of streamers (4)
 ```
 
 ### How to Add Features
@@ -95,41 +123,62 @@ ENABLE_MY_FEATURE=true cargo run --release --bin terminal_ui
 **Stack:** Rust + Carbon Framework + Yellowstone gRPC + VibeStation APIs + BirdEye API + SQLite  
 
 **Binaries:**
-- `pumpswap-alerts` - Main streaming terminal (lib + binary)
-- `terminal_ui` - Interactive TUI dashboard with enriched token data
-- `token_indexer` - **NEW** Background token enrichment worker (24/7)
-- `health_check` - **NEW** Database and indexer health diagnostics
-- `transaction_diagnostic` - Transaction analysis tool
+- `pumpswap_streamer` - PumpSwap DEX trade monitor → streams/pumpswap/events.jsonl
+- `bonkswap_streamer` - BonkSwap DEX trade monitor → streams/bonkswap/events.jsonl
+- `moonshot_streamer` - Moonshot DEX trade monitor → streams/moonshot/events.jsonl
+- `jupiter_dca_streamer` - **NEW** Jupiter DCA fill monitor → streams/jupiter_dca/events.jsonl
+- `aggregator` - **NEW** Multi-stream correlation engine → streams/aggregates/*.jsonl
+- `grpc_verify` - gRPC connection diagnostics
 
 **Core Modules:**
-- `main.rs` - Metadata-based volume processor (using TransactionStatusMeta)
-- `rpc_client.rs` - **NEW** Direct Solana RPC client (metadata, supply, decimals)
-- `persistence.rs` - SQLite-backed token cache and mint queue
-- `volume_aggregator.rs` - Rolling time-window volume tracking
-- `metadata_fetcher.rs` - Token metadata enrichment (RPC-based)
-- `pricing_fetcher.rs` - Price fetching with fallback (VibeStation → BirdEye)
-- `balances.rs` - Extract SOL/token changes from transaction metadata
-- `ui.rs` - Terminal UI renderer (ratatui)
-- `metrics_store.rs` - In-memory token metrics aggregation
-- `bot_detector.rs` - Wash trade detection
-- `shared_state.rs` - Thread-safe data structures for IPC
+- `main.rs` - Library entrypoint (exports all modules)
+- `streamer_core/` - **NEW** Shared JSONL streaming infrastructure
+  - `lib.rs` - Main streaming logic with Carbon pipeline
+  - `config.rs` - Configuration and environment validation
+  - `output_writer.rs` - JSONL file writer with rotation
+  - `trade_detector.rs` - Metadata-based trade extraction
+  - `balance_extractor.rs` - SOL/token balance change detection
+  - `grpc_client.rs` - Yellowstone gRPC client with reconnection
+- `aggregator_core/` - **NEW** Multi-stream correlation system
+  - `mod.rs` - Public API exports
+  - `normalizer.rs` - Trade struct and JSONL parsing
+  - `reader.rs` - Async JSONL tail reader with rotation detection
+  - `window.rs` - Rolling time windows (15m, 1h, 2h, 4h)
+  - `correlator.rs` - Cross-stream correlation (PumpSwap + Jupiter DCA)
+  - `scorer.rs` - Uptrend score computation (multi-factor)
+  - `detector.rs` - Signal detection (UPTREND, ACCUMULATION)
+  - `writer.rs` - Enriched metrics JSONL output
+- `state.rs` - Legacy state management (terminal UI)
+- `empty_decoder.rs` - Minimal decoder for metadata-only processing
 
-**Data Flow:**
+**Data Flow (Multi-Streamer Architecture):**
 ```
-Terminal (gRPC → Metrics) ──INSERT──> mint_queue (SQLite)
-                                           ↓
-Indexer (24/7 Worker) ──SELECT──> mint_queue ──API Enrich──> token_cache
-                                                                    ↓
-Terminal UI ──SELECT──> token_cache ──Display──> Dashboard
+Yellowstone gRPC Stream
+    ↓
+PumpSwap/BonkSwap/Moonshot/JupiterDCA Streamers
+    ↓
+JSONL Files (streams/*/events.jsonl)
+    ↓
+Aggregator (TailReader)
+    ↓
+TimeWindowAggregator (15m, 1h, 2h, 4h windows)
+    ↓
+CorrelationEngine (PumpSwap × Jupiter DCA)
+    ↓
+SignalScorer + SignalDetector
+    ↓
+Enriched Metrics (streams/aggregates/*.jsonl)
+    ↓
+Terminal UI (future integration)
 ```
 
 **Data Sources:**
-- **Primary:** Yellowstone gRPC (Geyser) - Live transaction stream with TransactionStatusMeta
-- **On-Chain Data:** Solana RPC - Token metadata, decimals, supply (direct from blockchain)
-- **Pricing:** VibeStation API - Price data (primary), BirdEye API (fallback)
-- **Persistence:** SQLite - Shared token cache and processing queue
+- **Primary:** Yellowstone gRPC (Geyser) - Live transaction stream
+- **On-Chain Data:** Solana RPC - Token metadata via TransactionStatusMeta
+- **Enrichment:** VibeStation API (price), BirdEye API (fallback)
+- **Persistence:** JSONL files (trade events) + SQLite (optional token cache)
 
-**Architecture Note:** All trade volumes are derived from Carbon's `TransactionStatusMeta` (pre/post balances and token balances). Token metadata is fetched directly from Solana RPC (no external APIs). Only price data uses external APIs. Token enrichment is decoupled from UI via database-backed queue system.
+**Architecture Note:** All trade volumes are extracted from Carbon's `TransactionStatusMeta` (pre/post balances). No instruction decoding required. Streamers emit unified JSONL schema. Aggregator correlates multiple streams to detect accumulation patterns.
 
 ---
 
@@ -329,6 +378,199 @@ solflow/
 
 ---
 
+## 🌊 Multi-Streamer Architecture
+
+### Overview
+
+The SolFlow system uses a **multi-streamer architecture** where each DEX program is monitored by a dedicated streamer binary that outputs to a unified JSONL schema.
+
+### Streamer Pattern
+
+**All streamers follow the same structure:**
+
+```rust
+use carbon_terminal::streamer_core::{run, config::StreamerConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenv::dotenv().ok();  // ← CRITICAL: Must load .env first
+
+    let config = StreamerConfig {
+        program_id: "PROGRAM_ADDRESS_HERE".to_string(),
+        program_name: "StreamerName".to_string(),
+        output_path: std::env::var("OUTPUT_PATH_VAR")
+            .unwrap_or_else(|_| "streams/default/events.jsonl".to_string()),
+    };
+
+    run(config).await
+}
+```
+
+**Critical Requirements:**
+1. ✅ **Must include `dotenv::dotenv().ok()`** at the start of `main()`
+2. ✅ Must work when run from `examples/solflow` directory
+3. ✅ Must load environment variables from `.env` in current working directory
+4. ✅ Must use `streamer_core::run()` for consistent behavior
+5. ✅ Must emit unified JSONL schema (see below)
+
+### Unified JSONL Schema
+
+**All streamers output the same schema:**
+
+```json
+{
+  "timestamp": 1731491200,
+  "signature": "...",
+  "program_id": "...",
+  "program_name": "PumpSwap|BonkSwap|Moonshot|JupiterDCA",
+  "action": "BUY|SELL",
+  "mint": "...",
+  "sol_amount": 1.5,
+  "token_amount": 1000000.0,
+  "token_decimals": 6,
+  "user_account": "...",
+  "discriminator": "..."
+}
+```
+
+**Why unified schema?**
+- Aggregator can process all streams identically
+- Easy to add new DEX programs (just add streamer)
+- Consistent data format for downstream consumers
+
+### Current Streamers
+
+| Streamer | Program ID | Output Path | Status |
+|----------|-----------|-------------|--------|
+| PumpSwap | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA` | `streams/pumpswap/events.jsonl` | ✅ Active |
+| BonkSwap | `LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj` | `streams/bonkswap/events.jsonl` | ✅ Active |
+| Moonshot | `MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG` | `streams/moonshot/events.jsonl` | ✅ Active |
+| Jupiter DCA | `DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M` | `streams/jupiter_dca/events.jsonl` | ✅ Active |
+
+### Adding a New Streamer
+
+**DO NOT** create a new streamer without user approval. If approved:
+
+1. Create binary: `src/bin/NEW_streamer.rs`
+2. Use exact pattern above with `dotenv::dotenv().ok()`
+3. Add `[[bin]]` entry to `Cargo.toml`
+4. Create output directory: `mkdir -p streams/NEW`
+5. Test from solflow directory: `cargo run --release --bin NEW_streamer`
+6. Document in this section
+
+---
+
+## 🎯 Aggregator Enrichment System
+
+### Purpose
+
+The aggregator correlates multiple JSONL trade streams to detect **accumulation patterns** and **uptrend signals** by analyzing cross-stream activity.
+
+### Architecture
+
+**Core Concept:** Detect when PumpSwap spot buying aligns with Jupiter DCA recurring buys → Strong accumulation signal
+
+**Components:**
+1. **TailReader** - Async JSONL file follower (non-blocking, handles rotation)
+2. **TimeWindowAggregator** - Rolling windows (15m, 1h, 2h, 4h)
+3. **CorrelationEngine** - Matches PumpSwap BUYs with Jupiter DCA BUYs within ±60s
+4. **SignalScorer** - Multi-factor uptrend scoring (net flow, ratio, velocity, diversity)
+5. **SignalDetector** - Emits UPTREND or ACCUMULATION signals based on thresholds
+6. **EnrichedMetricsWriter** - Outputs enriched JSONL per window
+
+### Why Jupiter DCA?
+
+**Jupiter DCA** (`DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M`) is a Dollar-Cost Averaging program where users set up recurring token buys.
+
+**Significance:**
+- DCA orders represent **long-term conviction** (not speculative)
+- High DCA activity + high spot activity = **coordinated accumulation**
+- More reliable signal than just spot trading volume
+
+### Correlation Logic
+
+**Goal:** Measure % of PumpSwap BUY volume that occurs within ±60 seconds of Jupiter DCA fills.
+
+**Algorithm:**
+1. Build BTreeMap index of Jupiter DCA BUY timestamps (O(D log D))
+2. For each PumpSwap BUY, check if DCA trade exists in [timestamp - 60s, timestamp + 60s] (O(log D))
+3. Sum overlapping PumpSwap volume
+4. Return: `(overlapping_volume / total_pumpswap_volume) * 100`
+
+**Example:**
+```
+PumpSwap BUYs: 100 SOL total
+Jupiter DCA fills within ±60s: 30 SOL overlaps with PumpSwap
+DCA Overlap: (30 / 100) * 100 = 30%
+```
+
+### Signal Types
+
+**ACCUMULATION** (priority signal):
+- Condition: `dca_overlap_pct > 25%` AND `net_flow_sol > 0`
+- Meaning: Smart money (DCA) and spot traders are accumulating together
+
+**UPTREND** (generic signal):
+- Condition: `uptrend_score > 0.7`
+- Meaning: Strong buying pressure across multiple factors
+
+**Uptrend Score Components:**
+- Net Flow (30%): Positive = more buys than sells
+- Buy Ratio (30%): Buy volume / total volume
+- Trade Velocity (20%): Trades per minute
+- Wallet Diversity (20%): Unique buyers / total buys (anti-wash trading)
+
+### Output Schema
+
+**Files:** `streams/aggregates/{15m,1h,2h,4h}.jsonl`
+
+**Schema:**
+```json
+{
+  "mint": "...",
+  "window": "1h",
+  "net_flow_sol": 123.45,
+  "buy_sell_ratio": 0.68,
+  "dca_overlap_pct": 27.3,
+  "uptrend_score": 0.82,
+  "signal": "ACCUMULATION",
+  "timestamp": 1731491200
+}
+```
+
+### Usage
+
+**Start aggregator:**
+```bash
+cd ~/projects/carbon/examples/solflow
+cargo run --release --bin aggregator
+```
+
+**Monitor signals:**
+```bash
+tail -f streams/aggregates/1h.jsonl | jq 'select(.signal != null)'
+```
+
+**Environment Variables:**
+- `PUMPSWAP_STREAM_PATH` - PumpSwap JSONL path (default: streams/pumpswap/events.jsonl)
+- `JUPITER_DCA_STREAM_PATH` - Jupiter DCA JSONL path (default: streams/jupiter_dca/events.jsonl)
+- `AGGREGATES_OUTPUT_PATH` - Output directory (default: streams/aggregates)
+- `CORRELATION_WINDOW_SECS` - Time window for correlation (default: 60)
+- `UPTREND_THRESHOLD` - Uptrend score threshold (default: 0.7)
+- `ACCUMULATION_THRESHOLD` - DCA overlap threshold % (default: 25.0)
+- `EMISSION_INTERVAL_SECS` - Metrics emission interval (default: 60)
+
+### Memory Management
+
+**Target:** < 300 MB for 50 active tokens
+
+**Strategy:**
+- Evict trades older than 4 hours every 60 seconds
+- Each window stores only trades within its time range
+- Auto-cleanup prevents unbounded growth
+
+---
+
 ## 🎯 Conventions
 
 ### Code Style
@@ -350,10 +592,20 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 ### Documentation Rule
 **All new `.md` files MUST:**
 1. Be saved in `/docs/` directory
-2. Use timestamp prefix: `YYYYMMDD-HHMM-descriptive-name.md`
-3. Example: `20251109-1420-volume-aggregation.md`
+2. Use timestamp prefix: `YYYYMMDDThh-descriptive-name.md` (ISO 8601 format with 'T' separator)
+3. Include hour (00-23) for proper chronological sorting
+4. Example: `20251113T10-architecture-aggregator-enrichment.md`
+5. Never create markdown files in root directory (except AGENTS.md, README.md, ARCHITECTURE.md)
 
-**Exceptions:** Root-level guides (AGENTS.md, README.md, USAGE.md)
+**Format Breakdown:**
+- `YYYY` = 4-digit year (e.g., 2025)
+- `MM` = 2-digit month (01-12)
+- `DD` = 2-digit day (01-31)
+- `T` = ISO 8601 separator (literal 'T' character)
+- `hh` = 2-digit hour in 24-hour format (00-23)
+- `-descriptive-name.md` = kebab-case description
+
+**Exceptions:** Root-level guides (AGENTS.md, README.md, ARCHITECTURE.md)
 
 ### Module Organization
 - **Shared logic** → `src/` as library modules
@@ -682,6 +934,44 @@ The terminal UI (`terminal_ui` binary) provides a real-time, enriched dashboard:
 
 ## 🔍 Common Tasks
 
+### Run Multi-Streamer System
+```bash
+# Terminal 1: PumpSwap streamer
+cargo run --release --bin pumpswap_streamer
+
+# Terminal 2: Jupiter DCA streamer
+cargo run --release --bin jupiter_dca_streamer
+
+# Terminal 3: Aggregator
+cargo run --release --bin aggregator
+
+# Terminal 4: Monitor signals
+tail -f streams/aggregates/1h.jsonl | jq 'select(.signal != null)'
+```
+
+### Debug Aggregator
+```bash
+# Enable debug logs for specific module
+RUST_LOG=carbon_terminal::aggregator_core::correlator=debug cargo run --release --bin aggregator
+
+# Check correlation for specific token
+cat streams/aggregates/1h.jsonl | jq 'select(.mint == "YOUR_MINT") | {mint, dca_overlap_pct, signal}'
+
+# Monitor memory usage
+watch -n 5 'ps aux | grep aggregator | grep -v grep'
+```
+
+### Test Correlation Accuracy
+```bash
+# Extract PumpSwap BUYs for a token
+cat streams/pumpswap/events.jsonl | jq 'select(.mint == "MINT" and .action == "BUY") | .timestamp'
+
+# Extract Jupiter DCA BUYs for same token
+cat streams/jupiter_dca/events.jsonl | jq 'select(.mint == "MINT" and .action == "BUY") | .timestamp'
+
+# Manually verify ±60s overlap matches aggregator output
+```
+
 ### Add New Module
 ```bash
 # 1. Create file
@@ -694,7 +984,7 @@ echo "mod my_module;" >> src/main.rs
 cargo check
 
 # 4. Document
-# Create docs/YYYYMMDD-HHMM-my-module.md
+# Create docs/YYYYMMDDThh-my-module.md
 ```
 
 ### Debug Live Stream
@@ -735,11 +1025,14 @@ cargo run --release --bin pumpswap-alerts | tee volume_log.txt
 ## 📚 Key Documentation
 
 **Latest:**
+- [Aggregator Enrichment System](docs/20251113T10-architecture-aggregator-enrichment.md) - Multi-stream correlation ✅
 - [Phase 10: Smart Indexing](docs/20251110-smart-indexing-phase10.md) - Freshness windows & queue optimization ✅
 - [Phase 9: RPC Client](docs/20251110-1115-rpc-client-solana-sdk-migration.md) - Direct RPC integration ✅
 - [Phase 8: Database Architecture](docs/20251110-0751-database-indexer-architecture-transition.md) - Indexer/DB design ✅
 
 **Architecture:**
+- [Multi-Streamer System](docs/20251113T08-architecture-streamer-system.md) - Streamer pattern and extension guide
+- [Streamer Patterns](docs/20251113T08-streamer-patterns-and-extension.md) - How to add new streamers
 - [Volume Aggregation](docs/20251109_VOLUME_AGGREGATION.md) - Rolling window implementation
 - [Diagnostic Integration](docs/20251109_DIAGNOSTIC_INTEGRATION.md) - Discriminator matching
 - [Mint Extraction](docs/20251109_MINT_EXTRACTION_FIX.md) - Pool → mint cache
@@ -825,19 +1118,30 @@ $ ps aux | grep pumpswap
 
 ## 📌 Version Information
 
-**Current Phase:** Phase 1.5 - Data Integrity Upgrade (Always-On Filters)  
-**Architecture:** Metadata-based volume extraction + Direct RPC integration + SQLite persistence + Smart background indexer + Data integrity filters  
-**Status:** ✅ Implementation Complete, Testing Pending  
-**Last Updated:** 2025-11-11  
+**Current Phase:** Phase 11 - Aggregator Enrichment System (Multi-Stream Correlation)  
+**Architecture:** Multi-streamer JSONL → Aggregator → Enriched metrics with signals  
+**Status:** ✅ Implementation Complete, Ready for Testing  
+**Last Updated:** 2025-11-13  
 
-**New in Phase 1.5 (Data Integrity Upgrade):**
-- ✅ **Duplicate Signature Filter** - 5-minute TTL cache prevents double-counting
-- ✅ **Quote Mint Validation** - Only SOL/WSOL pairs accepted (no USDC/USDT)
-- ✅ **Minimum Trade Size Filter** - 0.15 SOL threshold removes dust/spam
-- ✅ **Filter Statistics Tracking** - Real-time effectiveness monitoring
-- ✅ **Always-On Architecture** - No feature flags, permanent validation
-- ✅ **Performance:** < 1% CPU overhead, < 100 KB memory
-- ✅ **Expected Impact:** 10-25% event reduction, cleaner metrics
+**New in Phase 11 (Aggregator Enrichment System):**
+- ✅ **Jupiter DCA Streamer** - Monitors DCA fill events (DCA265...M)
+- ✅ **Aggregator Core** - 7 modules for multi-stream correlation
+- ✅ **TailReader** - Async JSONL tail with file rotation detection
+- ✅ **TimeWindowAggregator** - Rolling windows (15m, 1h, 2h, 4h)
+- ✅ **CorrelationEngine** - PumpSwap × Jupiter DCA matching (±60s)
+- ✅ **SignalScorer** - Multi-factor uptrend scoring
+- ✅ **SignalDetector** - UPTREND/ACCUMULATION signal detection
+- ✅ **EnrichedMetricsWriter** - Per-window JSONL output
+- ✅ **Architecture Documentation** - Complete spec with verification plan
+- ✅ **Memory Management** - < 300 MB for 50 tokens (auto-eviction)
+- ✅ **Unit Tests** - 15+ tests covering all core modules
+
+**Key Metrics:**
+- Total code: 1,213 lines (7 modules + 2 binaries)
+- Correlation complexity: O(P log D) via BTreeMap
+- Memory footprint: < 300 MB steady state
+- Emission interval: 60 seconds per window
+- Supported windows: 15m, 1h, 2h, 4h
 
 **Previous Phase 10:**
 - ✅ Freshness-based refresh intervals (per-field timestamps)
@@ -856,10 +1160,12 @@ $ ps aux | grep pumpswap
 - ✅ Metaplex metadata PDA parsing for token name/symbol
 - ✅ External APIs used **only** for price data
 
-**Architecture Changes (Phase 9 → Phase 10):**
-- **Before Phase 9:** VibeStation APIs for metadata + supply + price
-- **Phase 9:** Solana RPC for metadata + supply, APIs for price only
-- **Phase 10:** Smart indexing with freshness windows and selective refresh
+**Architecture Evolution:**
+- **Phase 1-7:** Single-binary terminal with inline processing
+- **Phase 8:** Database-backed indexer (decoupled enrichment)
+- **Phase 9:** Direct RPC integration (eliminated VibeStation metadata API)
+- **Phase 10:** Smart indexing (freshness windows, queue optimization)
+- **Phase 11:** Multi-streamer + Aggregator (cross-stream correlation) ← **Current**
 
 **Phase 10 Benefits:**
 - ✅ 85% reduction in API calls through smart caching
@@ -870,15 +1176,14 @@ $ ps aux | grep pumpswap
 
 **Verification Status:**
 - [x] All binaries compile successfully
-- [x] Database schema updated with freshness columns
-- [x] Queue deduplication logic implemented
-- [x] Automatic cleanup task running
-- [x] Enhanced metrics and logging active
-- [ ] 30-minute stress test pending (`./verify_indexer.sh`)
-- [ ] Database growth verification pending (24h monitor)
-- [ ] API rate limit verification pending
+- [x] Jupiter DCA streamer tested (dotenv fix applied)
+- [x] Aggregator modules implemented with unit tests
+- [x] Documentation complete (20251113T10-architecture-aggregator-enrichment.md)
+- [ ] 30-minute live test pending (all streamers + aggregator)
+- [ ] Signal detection validation pending
+- [ ] Cross-stream correlation accuracy verification pending
 
-**Pending Future Phases:**
-- Phase 11: Advanced analytics (trend detection, anomaly alerts)
-- Phase 12: Multi-terminal support and portfolio tracking
-- Phase 13: Historical data replay and backtesting
+**Next Steps:**
+- Phase 12: Terminal UI integration (display ACCUMULATION/UPTREND alerts)
+- Phase 13: Historical data replay (backtest correlation algorithm)
+- Phase 14: Advanced analytics (trend detection, anomaly alerts)

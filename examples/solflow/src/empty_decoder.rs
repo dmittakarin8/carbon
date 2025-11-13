@@ -10,7 +10,6 @@ use {
         instruction::DecodedInstruction,
     },
     serde::Serialize,
-    solana_instruction::Instruction,
 };
 
 /// Empty instruction type (never used, but required by trait)
@@ -32,9 +31,10 @@ impl InstructionDecoderCollection for EmptyDecoderCollection {
     type InstructionType = EmptyInstruction;
 
     fn parse_instruction(
-        _instruction: &Instruction,
+        instruction: &solana_instruction::Instruction,
     ) -> Option<DecodedInstruction<Self>> {
         // Never decode anything - we only care about transaction metadata
+        let _ = instruction;
         None
     }
 
