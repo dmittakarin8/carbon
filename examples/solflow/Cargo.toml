@@ -1,10 +1,10 @@
 [package]
-name = "carbon-terminal"
+name = "solflow"
 version = "0.1.0"
 edition = { workspace = true }
 
 [lib]
-name = "carbon_terminal"
+name = "solflow"
 path = "src/main.rs"
 
 [dependencies]

@@ -18,8 +18,8 @@
 //! - JUPITER_DCA_OUTPUT_PATH - Output file path (optional, default: streams/jupiter_dca/events.jsonl)
 //! - RUST_LOG - Logging level (optional, default: info)
 
-use carbon_terminal::streamer_core::{config::StreamerConfig, run};
-use carbon_terminal::streamer_core::config::BackendType;
+use solflow::streamer_core::{config::StreamerConfig, run};
+use solflow::streamer_core::config::BackendType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

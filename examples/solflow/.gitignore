@@ -64,3 +64,21 @@ tmp/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+# Ignore all streamer output
+streams/
+streams/*
+
+# Ignore SQLite WAL sidecar files
+data/*.db-wal
+data/*.db-shm
+
+# Ignore aggregator window JSONL outputs
+streams/aggregates/
+streams/aggregates/*
+
+# Ignore top-level event streams
+streams/pumpswap/
+streams/pumpswap/*
+streams/jupiter_dca/
+streams/jupiter_dca/*

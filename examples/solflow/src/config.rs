@@ -42,6 +42,7 @@ impl Config {
     
     /// Get verified program IDs for reference (not used by default)
     /// These are available for optional filtering via PROGRAM_FILTERS env var
+    #[allow(dead_code)]
     pub fn verified_program_ids() -> Vec<&'static str> {
         vec![
             "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", // PumpSwap

@@ -1,5 +1,5 @@
-use carbon_terminal::streamer_core::{run, StreamerConfig};
-use carbon_terminal::streamer_core::config::BackendType;
+use solflow::streamer_core::{run, StreamerConfig};
+use solflow::streamer_core::config::BackendType;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

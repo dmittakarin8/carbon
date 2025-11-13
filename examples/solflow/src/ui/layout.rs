@@ -36,11 +36,11 @@ pub fn render_layout(f: &mut Frame, area: Rect, state: &State) -> Result<(), Box
 fn render_header(f: &mut Frame, area: Rect) {
     let header = Block::default()
         .borders(Borders::ALL)
-        .title("Carbon Terminal - Live Trade Monitor");
+        .title("SolFlow - Live Trade Monitor");
     
     let text = vec![
         Line::from(vec![
-            Span::styled("Carbon Terminal", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("SolFlow", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw(" - Live Trade Monitor"),
         ]),
         Line::from(vec![

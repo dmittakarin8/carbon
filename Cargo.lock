@@ -1904,35 +1904,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "carbon-terminal"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "carbon-core 0.11.0",
- "carbon-log-metrics",
- "carbon-yellowstone-grpc-datasource",
- "chrono",
- "crossterm 0.28.1",
- "dotenv",
- "env_logger",
- "hex",
- "log",
- "ratatui",
- "rusqlite",
- "rustls 0.23.34",
- "serde",
- "serde_json",
- "solana-account-decoder-client-types 3.0.8",
- "solana-instruction 3.0.0",
- "solana-pubkey 3.0.0",
- "solana-signature 3.1.0",
- "solana-transaction-status 3.0.8",
- "tempfile",
- "tokio",
- "yellowstone-grpc-proto",
-]
-
-[[package]]
 name = "carbon-test-utils"
 version = "0.11.0"
 dependencies = [
@@ -9748,6 +9719,35 @@ dependencies = [
  "thiserror 2.0.17",
  "wasm-bindgen",
  "zeroize",
+]
+
+[[package]]
+name = "solflow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "carbon-core 0.11.0",
+ "carbon-log-metrics",
+ "carbon-yellowstone-grpc-datasource",
+ "chrono",
+ "crossterm 0.28.1",
+ "dotenv",
+ "env_logger",
+ "hex",
+ "log",
+ "ratatui",
+ "rusqlite",
+ "rustls 0.23.34",
+ "serde",
+ "serde_json",
+ "solana-account-decoder-client-types 3.0.8",
+ "solana-instruction 3.0.0",
+ "solana-pubkey 3.0.0",
+ "solana-signature 3.1.0",
+ "solana-transaction-status 3.0.8",
+ "tempfile",
+ "tokio",
+ "yellowstone-grpc-proto",
 ]
 
 [[package]]

@@ -19,6 +19,7 @@ pub enum TradeKind {
 
 /// Represents a balance change (delta) for a single account
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BalanceDelta {
     /// Account index in the transaction
     pub account_index: usize,

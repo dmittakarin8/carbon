@@ -20,11 +20,11 @@
 //! - EMISSION_INTERVAL_SECS - How often to emit metrics (default: 60)
 //! - RUST_LOG - Logging level (optional, default: info)
 
-use carbon_terminal::aggregator_core::{
+use solflow::aggregator_core::{
     AggregatorWriter, CorrelationEngine, EnrichedMetrics, SignalDetector, SignalScorer,
     TailReader, TimeWindowAggregator, Trade, TradeAction,
 };
-use carbon_terminal::streamer_core::config::BackendType;
+use solflow::streamer_core::config::BackendType;
 use chrono::Utc;
 use std::env;
 use std::path::PathBuf;

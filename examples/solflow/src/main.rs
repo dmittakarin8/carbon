@@ -63,7 +63,7 @@ pub async fn main() -> CarbonResult<()> {
         .expect("Can't set crypto provider to aws_lc_rs");
     
     // Log startup information (before UI starts to avoid overlay)
-    log::info!("🚀 Starting Carbon Terminal...");
+    log::info!("🚀 Starting SolFlow...");
     log::info!("📊 Configuration:");
     log::info!("   GEYSER_URL: {}", config.geyser_url);
     let filters_str = if config.program_filters.is_empty() {

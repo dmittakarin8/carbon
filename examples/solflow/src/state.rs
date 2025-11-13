@@ -22,6 +22,7 @@ pub struct Trade {
 
 /// Message sent through the channel from processor to state aggregator
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum StateMessage {
     Trade(Trade),
     Shutdown,
@@ -117,21 +118,25 @@ impl State {
     }
     
     /// Get net volume for a token (from aggregator)
+    #[allow(dead_code)]
     pub fn get_net_volume(&self, mint: &str) -> f64 {
         self.volume_aggregator.get_net_volume(mint)
     }
     
     /// Get volume for 1-minute window
+    #[allow(dead_code)]
     pub fn get_volume_1m(&self, mint: &str) -> f64 {
         self.volume_aggregator.get_volume_1m(mint)
     }
     
     /// Get volume for 5-minute window
+    #[allow(dead_code)]
     pub fn get_volume_5m(&self, mint: &str) -> f64 {
         self.volume_aggregator.get_volume_5m(mint)
     }
     
     /// Get volume for 15-minute window
+    #[allow(dead_code)]
     pub fn get_volume_15m(&self, mint: &str) -> f64 {
         self.volume_aggregator.get_volume_15m(mint)
     }

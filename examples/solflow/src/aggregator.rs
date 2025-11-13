@@ -37,16 +37,19 @@ impl VolumeAggregator {
     }
 
     /// Get net volume for a token (buy volume - sell volume)
+    #[allow(dead_code)]
     pub fn get_net_volume(&self, mint: &str) -> f64 {
         self.get_buy_volume(mint) - self.get_sell_volume(mint)
     }
 
     /// Get buy volume for a token
+    #[allow(dead_code)]
     pub fn get_buy_volume(&self, mint: &str) -> f64 {
         self.get_volume_in_window(mint, None, |t| matches!(t.direction, crate::trade_extractor::TradeKind::Buy))
     }
 
     /// Get sell volume for a token
+    #[allow(dead_code)]
     pub fn get_sell_volume(&self, mint: &str) -> f64 {
         self.get_volume_in_window(mint, None, |t| matches!(t.direction, crate::trade_extractor::TradeKind::Sell))
     }
@@ -54,6 +57,7 @@ impl VolumeAggregator {
     /// Get volume for a specific time window (strict cutoff)
     /// 
     /// window_seconds: None = all time, Some(n) = last n seconds
+    #[allow(dead_code)]
     pub fn get_volume_in_window<F>(&self, mint: &str, window_seconds: Option<u64>, filter: F) -> f64
     where
         F: Fn(&Trade) -> bool,
@@ -78,16 +82,19 @@ impl VolumeAggregator {
     }
 
     /// Get volume for 1-minute window
+    #[allow(dead_code)]
     pub fn get_volume_1m(&self, mint: &str) -> f64 {
         self.get_volume_in_window(mint, Some(60), |_| true)
     }
 
     /// Get volume for 5-minute window
+    #[allow(dead_code)]
     pub fn get_volume_5m(&self, mint: &str) -> f64 {
         self.get_volume_in_window(mint, Some(300), |_| true)
     }
 
     /// Get volume for 15-minute window
+    #[allow(dead_code)]
     pub fn get_volume_15m(&self, mint: &str) -> f64 {
         self.get_volume_in_window(mint, Some(900), |_| true)
     }

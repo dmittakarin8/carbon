@@ -56,6 +56,7 @@ impl Config {
     }
     
     /// Get verified program IDs for reference
+    #[allow(dead_code)]
     pub fn verified_program_ids() -> Vec<&'static str> {
         vec![
             "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", // PumpSwap
@@ -67,6 +68,7 @@ impl Config {
 
 /// Represents a balance change (delta) for a single account
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BalanceDelta {
     account_index: usize,
     mint: String,
@@ -507,6 +509,7 @@ pub async fn main() -> CarbonResult<()> {
         transaction_filters,
         Default::default(),
         Arc::new(RwLock::new(std::collections::HashSet::new())),
+        Default::default(), // YellowstoneGrpcClientConfig
     );
     
     // Create processor
