@@ -1,5 +1,6 @@
 use std::env;
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackendType {
@@ -7,12 +8,15 @@ pub enum BackendType {
     Sqlite,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StreamerConfig {
     pub program_id: String,
     pub program_name: String,
     pub output_path: String,
     pub backend: BackendType,
+    /// Optional pipeline channel for dual-channel streaming (Phase 4.2)
+    /// When Some, trades are sent to both legacy writer AND pipeline engine
+    pub pipeline_tx: Option<mpsc::Sender<crate::pipeline::types::TradeEvent>>,
 }
 
 #[derive(Debug, Clone)]

@@ -231,7 +231,10 @@ mod tests {
     async fn test_flush_writes_aggregates() {
         // Test: Periodic flush writes aggregates to database
         let engine = Arc::new(Mutex::new(PipelineEngine::new()));
-        let (_temp, db_writer) = create_test_db();
+        let (_temp, db_writer_concrete) = create_test_db();
+        
+        // Cast to trait object as expected by flush_aggregates
+        let db_writer: Arc<dyn AggregateDbWriter + Send + Sync> = db_writer_concrete;
         
         let mint = "flush_test_mint";
         let now = 1000;

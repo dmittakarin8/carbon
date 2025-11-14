@@ -17,24 +17,56 @@ use carbon_core::{
 };
 use carbon_log_metrics::LogMetrics;
 use chrono::Utc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
 #[path = "../empty_decoder.rs"]
 mod empty_decoder;
 use empty_decoder::EmptyDecoderCollection;
 
+/// Convert streamer TradeEvent to pipeline TradeEvent format
+///
+/// Phase 4.2: Dual-channel streaming helper
+fn convert_to_pipeline_event(
+    event: &TradeEvent,
+) -> crate::pipeline::types::TradeEvent {
+    use crate::pipeline::types::TradeDirection;
+    
+    crate::pipeline::types::TradeEvent {
+        timestamp: event.timestamp,
+        mint: event.mint.clone(),
+        direction: match event.action.as_str() {
+            "BUY" => TradeDirection::Buy,
+            "SELL" => TradeDirection::Sell,
+            _ => TradeDirection::Unknown,
+        },
+        sol_amount: event.sol_amount,
+        token_amount: event.token_amount,
+        token_decimals: event.token_decimals,
+        user_account: event.user_account.clone().unwrap_or_default(),
+        source_program: event.program_name.clone(),
+    }
+}
+
 #[derive(Clone)]
 struct TradeProcessor {
     config: StreamerConfig,
     writer: Arc<Mutex<Box<dyn WriterBackend>>>,
+    /// Optional pipeline channel for dual-channel streaming (Phase 4.2)
+    pipeline_tx: Option<mpsc::Sender<crate::pipeline::types::TradeEvent>>,
+    /// Counter for logging pipeline sends every 10k trades
+    send_count: Arc<AtomicU64>,
 }
 
 impl TradeProcessor {
     fn new(config: StreamerConfig, writer: Box<dyn WriterBackend>) -> Self {
+        let pipeline_tx = config.pipeline_tx.clone();
         Self {
             config,
             writer: Arc::new(Mutex::new(writer)),
+            pipeline_tx,
+            send_count: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -81,6 +113,27 @@ impl Processor for TradeProcessor {
                     event.token_amount,
                     event.mint
                 );
+            }
+
+            // Phase 4.2: Send to pipeline channel (non-blocking)
+            if let Some(tx) = &self.pipeline_tx {
+                let pipeline_event = convert_to_pipeline_event(&event);
+                
+                // try_send is non-blocking - never impacts streamer performance
+                if tx.try_send(pipeline_event).is_ok() {
+                    // Log every 10,000 successful sends
+                    let count = self.send_count.fetch_add(1, Ordering::Relaxed);
+                    if count > 0 && count % 10_000 == 0 {
+                        log::info!("📊 Pipeline ingestion active: {} trades sent", count);
+                    }
+                } else {
+                    // Channel full or closed - log only once per 1000 failures
+                    static FAILURE_COUNT: AtomicU64 = AtomicU64::new(0);
+                    let failures = FAILURE_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if failures % 1000 == 0 {
+                        log::warn!("⚠️  Pipeline channel full or closed (failures: {})", failures);
+                    }
+                }
             }
         }
 

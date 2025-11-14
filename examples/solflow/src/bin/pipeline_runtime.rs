@@ -76,12 +76,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel::<TradeEvent>(config.channel_buffer);
     info!("✅ Trade channel created (buffer: {})", config.channel_buffer);
 
-    // TODO: Phase 4.2 - Connect to streamers
-    // For now, this binary just sets up infrastructure
-    // Streamer integration will be added in next iteration
-    info!("⚠️  Note: Streamer integration not yet implemented");
-    info!("   └─ This binary sets up infrastructure only");
-    info!("   └─ Phase 4.2 will add dual-channel sending from streamers");
+    // Phase 4.2: Example of how to spawn streamers with pipeline integration
+    // Uncomment and modify when ready to activate dual-channel streaming
+    
+    /* EXAMPLE: Spawn PumpSwap streamer with pipeline channel
+    
+    use solflow::streamer_core::{config::BackendType, StreamerConfig};
+    
+    let pumpswap_config = StreamerConfig {
+        program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),
+        program_name: "PumpSwap".to_string(),
+        output_path: std::env::var("PUMPSWAP_OUTPUT_PATH")
+            .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
+        backend: BackendType::Jsonl,
+        pipeline_tx: Some(tx.clone()), // Enable dual-channel streaming
+    };
+    
+    tokio::spawn(async move {
+        info!("🚀 Starting PumpSwap streamer with pipeline integration");
+        if let Err(e) = solflow::streamer_core::run(pumpswap_config).await {
+            error!("❌ PumpSwap streamer failed: {}", e);
+        }
+    });
+    
+    // Repeat for other streamers (BonkSwap, Moonshot, JupiterDCA)...
+    */
+    
+    info!("⚠️  Note: Streamer spawning currently disabled (see commented code above)");
+    info!("   └─ To activate: Uncomment streamer spawn code in pipeline_runtime.rs");
+    info!("   └─ This will enable dual-channel streaming to pipeline");
 
     // Spawn background tasks
     info!("🚀 Spawning background tasks...");
