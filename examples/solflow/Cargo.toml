@@ -54,6 +54,10 @@ path = "src/bin/jupiter_dca_streamer.rs"
 name = "aggregator"
 path = "src/bin/aggregator.rs"
 
+[[bin]]
+name = "pipeline_runtime"
+path = "src/bin/pipeline_runtime.rs"
+
 [dependencies.rustls]
 default-features = false
 features = ["std", "aws_lc_rs"]
