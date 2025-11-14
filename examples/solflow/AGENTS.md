@@ -116,6 +116,174 @@ ENABLE_MY_FEATURE=true cargo run --release --bin terminal_ui
 
 ---
 
+## 🗄️ CRITICAL: Schema Source of Truth
+
+**MANDATORY CONSTRAINT:** This project maintains a **canonical SQL schema** in the `/sql` directory.
+
+### The Rule
+
+**Droid MUST:**
+- ✅ **Always reference `/sql` directory as the single source of truth for all database schema**
+- ✅ Use exact column names, types, and constraints defined in SQL files
+- ✅ Check `/sql/readme.md` for schema documentation and agent rules
+- ✅ Verify blocklist table (`mint_blocklist`) before inserting signals
+- ✅ Use only the tables defined in `/sql` for queries and data operations
+
+**Droid MUST NEVER:**
+- ❌ Create new tables outside `/sql` directory without explicit user approval
+- ❌ Modify table structure unless explicitly instructed
+- ❌ Use different column names than those defined in `/sql`
+- ❌ Create duplicate schema definitions in code
+- ❌ Ignore the blocklist when writing signals
+- ❌ Store raw trades in database (aggregate-only architecture)
+
+### Canonical Schema Files
+
+**Location:** `/sql` directory (aggregate-only architecture)
+
+| File | Table | Purpose | Written By |
+|------|-------|---------|------------|
+| `00_token_metadata.sql` | `token_metadata` | Token mint metadata (symbol, name, decimals, launch platform) | Metadata fetchers |
+| `01_mint_blocklist.sql` | `mint_blocklist` | Blacklist of blocked mints with reasons and expiration | Manual/Admin tools |
+| `02_token_aggregates.sql` | `token_aggregates` | Rolling-window aggregate metrics (60s/300s/900s net flows, counts, wallets) | Aggregator |
+| `03_token_signals.sql` | `token_signals` | Append-only signal events (BREAKOUT, FOCUSED, SURGE, BOT_DROPOFF) | Aggregator |
+| `04_system_metrics.sql` | `system_metrics` | System health and heartbeat metrics (optional) | Aggregator/Monitor |
+
+### Architecture: Aggregate-Only System
+
+**This system does NOT store raw trades.** Instead:
+1. **In-memory aggregator** processes streaming trades in real-time
+2. **Rolling windows** (60s, 300s, 900s) compute aggregate metrics
+3. **SQLite database** stores only:
+   - Aggregated metrics (net flows, counts, averages)
+   - Signal events (BREAKOUT, SURGE, etc.)
+   - Token metadata (symbol, decimals, etc.)
+   - System metrics (optional)
+
+**Why aggregate-only?**
+- ✅ Minimal disk I/O (no raw trade storage)
+- ✅ Constant memory footprint (rolling windows)
+- ✅ Fast queries (pre-aggregated data)
+- ✅ Historical analysis via signal events (not raw trades)
+
+### Data Write Rules
+
+**Aggregator writes to:**
+- `token_aggregates` - UPDATE or INSERT rolling-window metrics
+- `token_signals` - INSERT signal events (append-only)
+- `system_metrics` - INSERT heartbeat/health metrics
+
+**Metadata fetchers write to:**
+- `token_metadata` - INSERT or UPDATE token information
+
+**Before writing signals:**
+```sql
+-- MUST check blocklist first
+SELECT mint FROM mint_blocklist WHERE mint = ? AND (expires_at IS NULL OR expires_at > ?);
+-- If row exists, DO NOT write signal
+```
+
+**UIs/Terminals:**
+- Read from all tables
+- Filter out blocked mints unless explicitly showing them
+- Never write to database
+
+### Schema Validation
+
+**Before any commit involving database code:**
+```bash
+# Verify SQL files are unmodified (unless explicitly changing schema)
+git diff sql/
+
+# Check that Rust code uses correct table/column names
+grep -r "token_aggregates\|token_signals\|token_metadata" src/
+
+# Verify blocklist checks exist in signal writers
+grep -r "mint_blocklist" src/
+```
+
+**Schema modification workflow:**
+1. Get explicit user approval
+2. Update SQL file in `/sql` directory
+3. Update Rust code to match new schema
+4. Update this section of AGENTS.md
+5. Test with both SQLite and (if applicable) Postgres
+6. Document migration path in `/docs`
+
+### Column Reference (Quick Lookup)
+
+**token_aggregates:**
+- `mint` (TEXT, PK), `source_program` (TEXT), `last_trade_timestamp` (INTEGER)
+- `price_usd`, `price_sol`, `market_cap_usd` (REAL)
+- `net_flow_60s_sol`, `net_flow_300s_sol`, `net_flow_900s_sol` (REAL)
+- `buy_count_60s`, `sell_count_60s`, `buy_count_300s`, `sell_count_300s`, `buy_count_900s`, `sell_count_900s` (INTEGER)
+- `unique_wallets_300s`, `bot_trades_300s`, `bot_wallets_300s` (INTEGER)
+- `avg_trade_size_300s_sol`, `volume_300s_sol` (REAL)
+- `updated_at`, `created_at` (INTEGER)
+
+**token_signals:**
+- `id` (INTEGER, PK AUTOINCREMENT)
+- `mint` (TEXT), `signal_type` (TEXT), `window_seconds` (INTEGER)
+- `severity` (INTEGER, default 1), `score` (REAL), `details_json` (TEXT)
+- `created_at` (INTEGER), `sent_to_discord` (INTEGER, default 0), `seen_in_terminal` (INTEGER, default 0)
+
+**token_metadata:**
+- `mint` (TEXT, PK), `symbol` (TEXT), `name` (TEXT), `decimals` (INTEGER)
+- `launch_platform` (TEXT), `created_at` (INTEGER), `updated_at` (INTEGER)
+
+**mint_blocklist:**
+- `mint` (TEXT, PK), `reason` (TEXT), `blocked_by` (TEXT)
+- `created_at` (INTEGER), `expires_at` (INTEGER, nullable)
+
+### Integration Examples
+
+**Aggregator writes aggregate:**
+```rust
+// Update rolling-window metrics
+sqlx::query!(
+    r#"
+    INSERT INTO token_aggregates (mint, source_program, net_flow_300s_sol, buy_count_300s, updated_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(mint) DO UPDATE SET
+        net_flow_300s_sol = excluded.net_flow_300s_sol,
+        buy_count_300s = excluded.buy_count_300s,
+        updated_at = excluded.updated_at
+    "#,
+    mint, source_program, net_flow, buy_count, now, now
+).execute(&pool).await?;
+```
+
+**Aggregator writes signal (with blocklist check):**
+```rust
+// Check blocklist first
+let blocked = sqlx::query_scalar!(
+    "SELECT mint FROM mint_blocklist WHERE mint = ? AND (expires_at IS NULL OR expires_at > ?)",
+    mint, now
+).fetch_optional(&pool).await?;
+
+if blocked.is_none() {
+    // Safe to write signal
+    sqlx::query!(
+        r#"INSERT INTO token_signals (mint, signal_type, window_seconds, severity, score, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)"#,
+        mint, signal_type, window_secs, severity, score, now
+    ).execute(&pool).await?;
+}
+```
+
+**UI reads aggregates:**
+```rust
+let aggregates = sqlx::query_as!(
+    TokenAggregate,
+    r#"SELECT mint, net_flow_300s_sol, buy_count_300s, unique_wallets_300s
+       FROM token_aggregates
+       WHERE mint NOT IN (SELECT mint FROM mint_blocklist WHERE expires_at IS NULL OR expires_at > ?)
+       ORDER BY net_flow_300s_sol DESC
+       LIMIT 50"#,
+    now
+).fetch_all(&pool).await?;
+```
+
 ---
 
 ## 📋 Project Snapshot
