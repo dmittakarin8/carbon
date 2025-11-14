@@ -82,3 +82,4 @@ streams/pumpswap/
 streams/pumpswap/*
 streams/jupiter_dca/
 streams/jupiter_dca/*
+streams/pumpswap/events.jsonl
