@@ -386,13 +386,14 @@ LIMIT 100;
 
 ### To-dos
 
-- [ ] Initialize Next.js project in frontend/ directory with TypeScript, Tailwind CSS, and required dependencies
-- [ ] Create lib/db.ts for SQLite connection singleton and lib/queries.ts with SQL query functions including all 6 time windows (60s, 300s, 900s, 3600s, 7200s, 14400s)
-- [ ] Create lib/types.ts with TypeScript interfaces matching the API response format including all 6 net flow fields
-- [ ] Create app/api/tokens/route.ts with SQL query that includes SUM(net_flow_3600s_sol), SUM(net_flow_7200s_sol), SUM(net_flow_14400s_sol) in addition to existing windows
-- [ ] Create app/api/sparkline/[mint]/route.ts for historical net flow data
-- [ ] Create app/api/tokens/[mint]/block/route.ts and unblock/route.ts for blocking functionality
-- [ ] Create app/components/TokenDashboard.tsx with table columns for all 6 time windows (1m, 5m, 15m, 1h, 2h, 4h) with sortable headers
-- [ ] Create app/components/NetFlowSparkline.tsx using Recharts for mini line charts
-- [ ] Create app/components/BlockButton.tsx with confirmation modal and API integration
-- [ ] Create app/page.tsx that renders TokenDashboard with auto-refresh every 5-10 seconds
+- [x] Initialize Next.js project in frontend/ directory with TypeScript, Tailwind CSS, and required dependencies
+- [x] Create lib/db.ts for SQLite connection singleton
+- [x] Create lib/queries.ts with SQL query functions including all 6 time windows
+- [x] Create lib/types.ts with TypeScript interfaces matching API response format
+- [x] Create app/api/tokens/route.ts with SQL query including all 6 net flow windows
+- [x] Create app/api/sparkline/[mint]/route.ts for historical net flow data
+- [x] Create app/api/tokens/[mint]/block/route.ts and unblock/route.ts
+- [x] Create app/components/TokenDashboard.tsx with table columns for all 6 time windows
+- [x] Create app/components/NetFlowSparkline.tsx using Recharts
+- [x] Create app/components/BlockButton.tsx with confirmation modal
+- [x] Create app/page.tsx that renders TokenDashboard with auto-refresh
