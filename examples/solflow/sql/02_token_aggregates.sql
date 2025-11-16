@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS token_aggregates (
     net_flow_60s_sol        REAL,
     net_flow_300s_sol       REAL,
     net_flow_900s_sol       REAL,
+    net_flow_3600s_sol      REAL,
+    net_flow_7200s_sol      REAL,
+    net_flow_14400s_sol     REAL,
 
     buy_count_60s           INTEGER,
     sell_count_60s          INTEGER,

@@ -10,10 +10,13 @@ use std::collections::{HashMap, HashSet};
 
 /// Per-token rolling state container
 ///
-/// Maintains rolling buffers for three time windows:
+/// Maintains rolling buffers for six time windows:
 /// - 60s (1 minute)
 /// - 300s (5 minutes)
 /// - 900s (15 minutes)
+/// - 3600s (1 hour)
+/// - 7200s (2 hours)
+/// - 14400s (4 hours)
 #[derive(Debug, Clone)]
 pub struct TokenRollingState {
     /// Token mint address
@@ -27,6 +30,15 @@ pub struct TokenRollingState {
 
     /// Rolling buffer: trades in last 900 seconds (15 minutes)
     pub trades_900s: Vec<TradeEvent>,
+
+    /// Rolling buffer: trades in last 3600 seconds (1 hour)
+    pub trades_3600s: Vec<TradeEvent>,
+
+    /// Rolling buffer: trades in last 7200 seconds (2 hours)
+    pub trades_7200s: Vec<TradeEvent>,
+
+    /// Rolling buffer: trades in last 14400 seconds (4 hours)
+    pub trades_14400s: Vec<TradeEvent>,
 
     /// Unique wallet addresses in 300s window
     pub unique_wallets_300s: HashSet<String>,
@@ -50,6 +62,9 @@ pub struct RollingMetrics {
     pub net_flow_60s_sol: f64,
     pub net_flow_300s_sol: f64,
     pub net_flow_900s_sol: f64,
+    pub net_flow_3600s_sol: f64,
+    pub net_flow_7200s_sol: f64,
+    pub net_flow_14400s_sol: f64,
 
     // Trade counts (60s window)
     pub buy_count_60s: i32,
@@ -499,6 +514,9 @@ impl TokenRollingState {
             trades_60s: Vec::with_capacity(100),
             trades_300s: Vec::with_capacity(500),
             trades_900s: Vec::with_capacity(1500),
+            trades_3600s: Vec::with_capacity(6000),
+            trades_7200s: Vec::with_capacity(12000),
+            trades_14400s: Vec::with_capacity(24000),
             unique_wallets_300s: HashSet::new(),
             bot_wallets_300s: HashSet::new(),
             trades_by_program: HashMap::new(),
@@ -535,7 +553,10 @@ impl TokenRollingState {
         // Add to all window buffers (most recent trades)
         self.trades_60s.push(trade.clone());
         self.trades_300s.push(trade.clone());
-        self.trades_900s.push(trade);
+        self.trades_900s.push(trade.clone());
+        self.trades_3600s.push(trade.clone());
+        self.trades_7200s.push(trade.clone());
+        self.trades_14400s.push(trade);
     }
 
     /// Evict trades older than window cutoffs
@@ -549,6 +570,9 @@ impl TokenRollingState {
         let cutoff_60s = now - 60;
         let cutoff_300s = now - 300;
         let cutoff_900s = now - 900;
+        let cutoff_3600s = now - 3600;
+        let cutoff_7200s = now - 7200;
+        let cutoff_14400s = now - 14400;
 
         // Evict from 60s window
         self.trades_60s
@@ -562,9 +586,21 @@ impl TokenRollingState {
         self.trades_900s
             .retain(|trade| trade.timestamp >= cutoff_900s);
 
-        // Evict from program-specific buckets (use 900s window as longest)
+        // Evict from 3600s window (1 hour)
+        self.trades_3600s
+            .retain(|trade| trade.timestamp >= cutoff_3600s);
+
+        // Evict from 7200s window (2 hours)
+        self.trades_7200s
+            .retain(|trade| trade.timestamp >= cutoff_7200s);
+
+        // Evict from 14400s window (4 hours)
+        self.trades_14400s
+            .retain(|trade| trade.timestamp >= cutoff_14400s);
+
+        // Evict from program-specific buckets (use 14400s window as longest)
         for trades in self.trades_by_program.values_mut() {
-            trades.retain(|trade| trade.timestamp >= cutoff_900s);
+            trades.retain(|trade| trade.timestamp >= cutoff_14400s);
         }
 
         // Recompute unique wallets from remaining 300s trades
@@ -639,6 +675,12 @@ impl TokenRollingState {
             compute_window_metrics(&self.trades_300s);
         let (net_flow_900s, buy_count_900s, sell_count_900s) =
             compute_window_metrics(&self.trades_900s);
+        let (net_flow_3600s, _, _) =
+            compute_window_metrics(&self.trades_3600s);
+        let (net_flow_7200s, _, _) =
+            compute_window_metrics(&self.trades_7200s);
+        let (net_flow_14400s, _, _) =
+            compute_window_metrics(&self.trades_14400s);
 
         // Phase 3-A: Detect bot wallets in 300s window
         let (bot_wallets, bot_trades_count) = detect_bot_wallets(&self.trades_300s);
@@ -647,6 +689,9 @@ impl TokenRollingState {
             net_flow_60s_sol: net_flow_60s,
             net_flow_300s_sol: net_flow_300s,
             net_flow_900s_sol: net_flow_900s,
+            net_flow_3600s_sol: net_flow_3600s,
+            net_flow_7200s_sol: net_flow_7200s,
+            net_flow_14400s_sol: net_flow_14400s,
             buy_count_60s,
             sell_count_60s,
             buy_count_300s,

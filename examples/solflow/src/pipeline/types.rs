@@ -66,6 +66,9 @@ pub struct AggregatedTokenState {
     pub net_flow_60s_sol: Option<f64>,
     pub net_flow_300s_sol: Option<f64>,
     pub net_flow_900s_sol: Option<f64>,
+    pub net_flow_3600s_sol: Option<f64>,
+    pub net_flow_7200s_sol: Option<f64>,
+    pub net_flow_14400s_sol: Option<f64>,
 
     // Trade counts (60s window)
     pub buy_count_60s: Option<i32>,
@@ -145,6 +148,9 @@ impl AggregatedTokenState {
             net_flow_60s_sol: Some(metrics.net_flow_60s_sol),
             net_flow_300s_sol: Some(metrics.net_flow_300s_sol),
             net_flow_900s_sol: Some(metrics.net_flow_900s_sol),
+            net_flow_3600s_sol: Some(metrics.net_flow_3600s_sol),
+            net_flow_7200s_sol: Some(metrics.net_flow_7200s_sol),
+            net_flow_14400s_sol: Some(metrics.net_flow_14400s_sol),
 
             // Trade counts (60s window)
             buy_count_60s: Some(metrics.buy_count_60s),
@@ -218,6 +224,9 @@ mod tests {
             net_flow_60s_sol: 10.5,
             net_flow_300s_sol: 45.2,
             net_flow_900s_sol: 120.8,
+            net_flow_3600s_sol: 250.0,
+            net_flow_7200s_sol: 400.0,
+            net_flow_14400s_sol: 650.0,
             buy_count_60s: 5,
             sell_count_60s: 2,
             buy_count_300s: 20,
@@ -385,6 +394,9 @@ mod tests {
             net_flow_60s_sol: 0.0,
             net_flow_300s_sol: 0.0,
             net_flow_900s_sol: 0.0,
+            net_flow_3600s_sol: 0.0,
+            net_flow_7200s_sol: 0.0,
+            net_flow_14400s_sol: 0.0,
             buy_count_60s: 0,
             sell_count_60s: 0,
             buy_count_300s: 0,
@@ -413,6 +425,9 @@ mod tests {
             net_flow_60s_sol: -5.0,
             net_flow_300s_sol: -30.0, // Negative (net selling)
             net_flow_900s_sol: -50.0,
+            net_flow_3600s_sol: -100.0,
+            net_flow_7200s_sol: -150.0,
+            net_flow_14400s_sol: -200.0,
             buy_count_60s: 2,
             sell_count_60s: 5,
             buy_count_300s: 10,
