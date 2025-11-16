@@ -27,6 +27,7 @@ pub struct RuntimeConfig {
     pub rust_log: String,
     pub output_max_size_mb: u64,
     pub output_max_rotations: u32,
+    pub enable_jsonl: bool,
 }
 
 #[derive(Debug)]
@@ -85,6 +86,12 @@ impl RuntimeConfig {
             .parse::<u32>()
             .unwrap_or(10);
 
+        let enable_jsonl = env::var("ENABLE_JSONL")
+            .unwrap_or_else(|_| "false".to_string())
+            .to_lowercase()
+            .parse::<bool>()
+            .unwrap_or(false);
+
         Ok(Self {
             geyser_url,
             x_token,
@@ -92,6 +99,7 @@ impl RuntimeConfig {
             rust_log,
             output_max_size_mb,
             output_max_rotations,
+            enable_jsonl,
         })
     }
 }

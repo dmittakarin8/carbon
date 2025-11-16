@@ -57,16 +57,19 @@ struct TradeProcessor {
     pipeline_tx: Option<mpsc::Sender<crate::pipeline::types::TradeEvent>>,
     /// Counter for logging pipeline sends every 10k trades
     send_count: Arc<AtomicU64>,
+    /// Flag to enable/disable JSONL writes (pipeline is always enabled)
+    enable_jsonl: bool,
 }
 
 impl TradeProcessor {
-    fn new(config: StreamerConfig, writer: Box<dyn WriterBackend>) -> Self {
+    fn new(config: StreamerConfig, writer: Box<dyn WriterBackend>, enable_jsonl: bool) -> Self {
         let pipeline_tx = config.pipeline_tx.clone();
         Self {
             config,
             writer: Arc::new(Mutex::new(writer)),
             pipeline_tx,
             send_count: Arc::new(AtomicU64::new(0)),
+            enable_jsonl,
         }
     }
 }
@@ -101,21 +104,8 @@ impl Processor for TradeProcessor {
                 discriminator,
             };
 
-            let mut writer = self.writer.lock().await;
-            if let Err(e) = writer.write(&event).await {
-                log::error!("Failed to write event: {:?}", e);
-            } else {
-                log::debug!(
-                    "✅ {} {} {:.6} SOL → {:.2} tokens ({})",
-                    event.action,
-                    event.signature,
-                    event.sol_amount,
-                    event.token_amount,
-                    event.mint
-                );
-            }
-
-            // Phase 4.2: Send to pipeline channel (non-blocking)
+            // Phase 4.2 Primary Path: Send to pipeline channel (non-blocking)
+            // This ALWAYS happens regardless of JSONL setting
             if let Some(tx) = &self.pipeline_tx {
                 let pipeline_event = convert_to_pipeline_event(&event);
                 
@@ -133,6 +123,23 @@ impl Processor for TradeProcessor {
                     if failures % 1000 == 0 {
                         log::warn!("⚠️  Pipeline channel full or closed (failures: {})", failures);
                     }
+                }
+            }
+
+            // Optional: Write to JSONL (disabled by default, enabled via ENABLE_JSONL=true)
+            if self.enable_jsonl {
+                let mut writer = self.writer.lock().await;
+                if let Err(e) = writer.write(&event).await {
+                    log::error!("Failed to write JSONL event: {:?}", e);
+                } else {
+                    log::debug!(
+                        "✅ JSONL: {} {} {:.6} SOL → {:.2} tokens ({})",
+                        event.action,
+                        event.signature,
+                        event.sol_amount,
+                        event.token_amount,
+                        event.mint
+                    );
                 }
             }
         }
@@ -158,15 +165,26 @@ pub async fn run(streamer_config: StreamerConfig) -> Result<(), Box<dyn std::err
     
     let runtime_config = RuntimeConfig::from_env()?;
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&runtime_config.rust_log))
-        .target(env_logger::Target::Stderr)
-        .init();
+    // Skip logger init if running inside pipeline_runtime (already initialized)
+    if std::env::var("ENABLE_PIPELINE").unwrap_or_default() != "true" {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&runtime_config.rust_log))
+            .target(env_logger::Target::Stderr)
+            .try_init()
+            .ok(); // Ignore error if already initialized
+    }
 
     log::info!("🚀 Starting {} streamer", streamer_config.program_name);
     log::info!("   Program ID: {}", streamer_config.program_id);
     log::info!("   Output: {}", streamer_config.output_path);
     log::info!("   Geyser URL: {}", runtime_config.geyser_url);
     log::info!("   Commitment: {:?}", runtime_config.commitment_level);
+
+    // Log JSONL status
+    if runtime_config.enable_jsonl {
+        log::info!("📝 JSONL writes: ENABLED");
+    } else {
+        log::info!("📝 JSONL writes: DISABLED (set ENABLE_JSONL=true to enable)");
+    }
 
     let writer: Box<dyn WriterBackend> = match streamer_config.backend {
         BackendType::Jsonl => {
@@ -183,7 +201,7 @@ pub async fn run(streamer_config: StreamerConfig) -> Result<(), Box<dyn std::err
     
     log::info!("📊 Backend: {}", writer.backend_type());
 
-    let processor = TradeProcessor::new(streamer_config.clone(), writer);
+    let processor = TradeProcessor::new(streamer_config.clone(), writer, runtime_config.enable_jsonl);
 
     run_with_reconnect(&runtime_config, &streamer_config.program_id, move |client| {
         let proc = processor.clone();

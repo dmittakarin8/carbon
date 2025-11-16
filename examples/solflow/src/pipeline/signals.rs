@@ -11,12 +11,14 @@
 /// - FOCUSED: Concentrated buying from small number of wallets
 /// - SURGE: Sustained high volume over time window
 /// - BOT_DROPOFF: Sudden decrease in bot trading activity
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// - DCA_CONVICTION: Jupiter DCA BUYs overlap with spot BUYs (accumulation signal)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignalType {
     Breakout,
     Focused,
     Surge,
     BotDropoff,
+    DcaConviction,
 }
 
 impl SignalType {
@@ -29,6 +31,7 @@ impl SignalType {
             SignalType::Focused => "FOCUSED",
             SignalType::Surge => "SURGE",
             SignalType::BotDropoff => "BOT_DROPOFF",
+            SignalType::DcaConviction => "DCA_CONVICTION",
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Pipeline ingestion - async channel processor for trade events
 //!
 //! Phase 4: Live trade ingestion from streamers
+//! Phase 4.3: Unified flush loop with single lock acquisition
 
 use super::db::AggregateDbWriter;
 use super::engine::PipelineEngine;
@@ -11,10 +12,18 @@ use tokio::time::{interval, Duration};
 
 /// Start pipeline ingestion from trade event channel
 ///
-/// This is the main ingestion loop that:
+/// This is the ONLY flush mechanism in the entire pipeline.
+///
+/// Main loop:
 /// 1. Receives trades from streamers via mpsc channel
 /// 2. Processes each trade through PipelineEngine
-/// 3. Periodically flushes aggregates and signals to database
+/// 3. Periodically flushes aggregates and signals to database (single lock acquisition)
+///
+/// Flush cycle optimization:
+/// - Lock engine ONCE per flush (not once per mint)
+/// - Compute all metrics while holding lock
+/// - Release lock BEFORE database writes
+/// - Log channel utilization for monitoring
 ///
 /// Arguments:
 /// - `rx`: Receiver end of trade event channel
@@ -29,19 +38,20 @@ pub async fn start_pipeline_ingestion(
     db_writer: Arc<dyn AggregateDbWriter + Send + Sync>,
     flush_interval_ms: u64,
 ) {
-    log::info!("🚀 Starting pipeline ingestion");
+    log::info!("🚀 Starting pipeline ingestion (UNIFIED FLUSH LOOP)");
     log::info!("   ├─ Flush interval: {}ms", flush_interval_ms);
     log::info!("   └─ Waiting for trades...");
 
     let mut flush_timer = interval(Duration::from_millis(flush_interval_ms));
     let mut trade_count = 0u64;
     let mut last_log_time = std::time::Instant::now();
+    let channel_capacity = 10000; // Match STREAMER_CHANNEL_BUFFER default
 
     loop {
         tokio::select! {
             // Receive trade from channel
             Some(trade) = rx.recv() => {
-                // Process trade through engine
+                // Process trade through engine (single lock acquisition)
                 {
                     let mut engine_guard = engine.lock().unwrap();
                     engine_guard.process_trade(trade);
@@ -58,10 +68,88 @@ pub async fn start_pipeline_ingestion(
                 }
             }
             
-            // Periodic flush timer
+            // Periodic flush timer - ONLY FLUSH MECHANISM
             _ = flush_timer.tick() => {
-                if let Err(e) = flush_aggregates(&engine, &db_writer).await {
-                    log::error!("❌ Failed to flush aggregates: {}", e);
+                let now = chrono::Utc::now().timestamp();
+                let flush_start = std::time::Instant::now();
+                
+                // 1. Lock engine ONCE and compute all metrics
+                let (aggregates, all_signals, active_mint_count) = {
+                    let mut engine_guard = engine.lock().unwrap();
+                    let active_mints = engine_guard.get_active_mints();
+                    
+                    if active_mints.is_empty() {
+                        // No active tokens, skip flush
+                        (Vec::new(), Vec::new(), 0)
+                    } else {
+                        let mut aggregates = Vec::new();
+                        let mut all_signals = Vec::new();
+                        
+                        // Compute metrics for all mints while holding lock
+                        for mint in &active_mints {
+                            match engine_guard.compute_metrics(mint, now) {
+                                Ok((metrics, signals, aggregate)) => {
+                                    aggregates.push(aggregate);
+                                    all_signals.extend(signals);
+                                    
+                                    // Update bot history for BOT_DROPOFF detection
+                                    engine_guard.update_bot_history(mint, metrics.bot_trades_count_300s);
+                                }
+                                Err(e) => {
+                                    log::warn!("⚠️  Failed to compute metrics for {}: {}", mint, e);
+                                }
+                            }
+                        }
+                        
+                        (aggregates, all_signals, active_mints.len())
+                    }
+                }; // Lock released here
+                
+                // 2. Database writes (engine unlocked - no blocking)
+                if !aggregates.is_empty() {
+                    match db_writer.write_aggregates(aggregates.clone()).await {
+                        Ok(_) => {
+                            log::debug!("✅ Wrote {} aggregates to database", aggregates.len());
+                        }
+                        Err(e) => {
+                            log::error!("❌ Failed to write aggregates: {}", e);
+                        }
+                    }
+                }
+                
+                // Write signals to database
+                let mut signals_written = 0;
+                for signal in all_signals {
+                    match db_writer.write_signal(signal.clone()).await {
+                        Ok(_) => signals_written += 1,
+                        Err(e) => {
+                            // May fail due to blocklist - this is expected
+                            log::debug!("⚠️  Signal not written (mint: {}, type: {:?}): {}", 
+                                signal.mint, signal.signal_type, e);
+                        }
+                    }
+                }
+                
+                if signals_written > 0 {
+                    log::info!("🚨 Detected {} signals", signals_written);
+                }
+                
+                // 3. Log channel health and flush performance
+                let channel_usage = rx.len();
+                let flush_duration = flush_start.elapsed();
+                
+                log::info!("📊 Flush complete: {} mints, {} signals | channel: {}/{} | {}ms", 
+                    active_mint_count, 
+                    signals_written,
+                    channel_usage, 
+                    channel_capacity,
+                    flush_duration.as_millis());
+                
+                // Warn if channel is filling up (> 50% capacity)
+                if channel_usage > channel_capacity / 2 {
+                    log::warn!("⚠️  Channel usage high: {}/{} ({}%)", 
+                        channel_usage, channel_capacity, 
+                        (channel_usage * 100) / channel_capacity);
                 }
             }
             
@@ -70,10 +158,38 @@ pub async fn start_pipeline_ingestion(
                 log::warn!("⚠️  Trade channel closed, stopping ingestion");
                 
                 // Final flush before exit
-                if let Err(e) = flush_aggregates(&engine, &db_writer).await {
-                    log::error!("❌ Failed final flush: {}", e);
+                log::info!("🔄 Performing final flush...");
+                let now = chrono::Utc::now().timestamp();
+                
+                let (aggregates, all_signals, _) = {
+                    let mut engine_guard = engine.lock().unwrap();
+                    let active_mints = engine_guard.get_active_mints();
+                    
+                    let mut aggregates = Vec::new();
+                    let mut all_signals = Vec::new();
+                    
+                    for mint in &active_mints {
+                        if let Ok((metrics, signals, aggregate)) = engine_guard.compute_metrics(mint, now) {
+                            aggregates.push(aggregate);
+                            all_signals.extend(signals);
+                            engine_guard.update_bot_history(mint, metrics.bot_trades_count_300s);
+                        }
+                    }
+                    
+                    (aggregates, all_signals, active_mints.len())
+                };
+                
+                if !aggregates.is_empty() {
+                    if let Err(e) = db_writer.write_aggregates(aggregates).await {
+                        log::error!("❌ Failed final aggregate flush: {}", e);
+                    }
                 }
                 
+                for signal in all_signals {
+                    let _ = db_writer.write_signal(signal).await;
+                }
+                
+                log::info!("✅ Final flush complete");
                 break;
             }
         }
@@ -82,81 +198,9 @@ pub async fn start_pipeline_ingestion(
     log::info!("✅ Pipeline ingestion stopped");
 }
 
-/// Flush aggregates and signals for all active mints
-///
-/// Iterates through all mints with state in PipelineEngine and:
-/// 1. Computes metrics
-/// 2. Detects signals
-/// 3. Builds aggregates
-/// 4. Writes to database
-/// 5. Updates bot history
-async fn flush_aggregates(
-    engine: &Arc<Mutex<PipelineEngine>>,
-    db_writer: &Arc<dyn AggregateDbWriter + Send + Sync>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let now = chrono::Utc::now().timestamp();
-    
-    // Get active mints from engine
-    let mints: Vec<String> = {
-        let engine_guard = engine.lock().unwrap();
-        engine_guard.get_active_mints()
-    };
-    
-    if mints.is_empty() {
-        // No active tokens, skip flush
-        return Ok(());
-    }
-    
-    let mut aggregates = Vec::new();
-    let mut all_signals = Vec::new();
-    
-    // Compute metrics for each mint
-    for mint in &mints {
-        let result = {
-            let engine_guard = engine.lock().unwrap();
-            engine_guard.compute_metrics(mint, now)
-        };
-        
-        match result {
-            Ok((metrics, signals, aggregate)) => {
-                aggregates.push(aggregate);
-                all_signals.extend(signals);
-                
-                // Update bot history for BOT_DROPOFF detection
-                let mut engine_guard = engine.lock().unwrap();
-                engine_guard.update_bot_history(mint, metrics.bot_trades_count_300s);
-            }
-            Err(e) => {
-                log::warn!("⚠️  Failed to compute metrics for {}: {}", mint, e);
-            }
-        }
-    }
-    
-    // Write aggregates to database
-    if !aggregates.is_empty() {
-        db_writer.write_aggregates(aggregates.clone()).await?;
-        log::debug!("✅ Wrote {} aggregates to database", aggregates.len());
-    }
-    
-    // Write signals to database
-    let mut signals_written = 0;
-    for signal in all_signals {
-        match db_writer.write_signal(signal.clone()).await {
-            Ok(_) => signals_written += 1,
-            Err(e) => {
-                // May fail due to blocklist - this is expected
-                log::debug!("⚠️  Signal not written (mint: {}, type: {:?}): {}", 
-                    signal.mint, signal.signal_type, e);
-            }
-        }
-    }
-    
-    if signals_written > 0 {
-        log::info!("🚨 Detected {} signals", signals_written);
-    }
-    
-    Ok(())
-}
+// Flush logic is now integrated directly into the tokio::select! loop above.
+// This eliminates the need for a separate function and allows better control
+// over lock acquisition timing.
 
 #[cfg(test)]
 mod tests {
@@ -233,7 +277,7 @@ mod tests {
         let engine = Arc::new(Mutex::new(PipelineEngine::new()));
         let (_temp, db_writer_concrete) = create_test_db();
         
-        // Cast to trait object as expected by flush_aggregates
+        // Cast to trait object
         let db_writer: Arc<dyn AggregateDbWriter + Send + Sync> = db_writer_concrete;
         
         let mint = "flush_test_mint";
@@ -248,11 +292,35 @@ mod tests {
             }
         }
         
-        // Manually trigger flush
-        flush_aggregates(&engine, &db_writer).await.unwrap();
+        // Manually trigger flush (inline logic - no separate function needed)
+        let (aggregates, signals, _) = {
+            let mut engine_guard = engine.lock().unwrap();
+            let active_mints = engine_guard.get_active_mints();
+            
+            let mut aggregates = Vec::new();
+            let mut signals = Vec::new();
+            
+            for mint in &active_mints {
+                if let Ok((metrics, sigs, agg)) = engine_guard.compute_metrics(mint, now) {
+                    aggregates.push(agg);
+                    signals.extend(sigs);
+                    engine_guard.update_bot_history(mint, metrics.bot_trades_count_300s);
+                }
+            }
+            
+            (aggregates, signals, active_mints.len())
+        };
         
-        // Verify aggregate was written (query database)
-        // Note: This requires db_writer to expose connection or use separate query
-        // For now, just verify no errors
+        // Write aggregates
+        if !aggregates.is_empty() {
+            db_writer.write_aggregates(aggregates).await.unwrap();
+        }
+        
+        // Write signals
+        for signal in signals {
+            let _ = db_writer.write_signal(signal).await;
+        }
+        
+        // Verify no errors (actual database verification would require exposing connection)
     }
 }

@@ -33,6 +33,11 @@ pub struct TokenRollingState {
 
     /// Bot wallet addresses in 300s window
     pub bot_wallets_300s: HashSet<String>,
+
+    /// Trades grouped by source program (for DCA correlation)
+    /// Key: source_program (e.g., "PumpSwap", "BonkSwap", "Moonshot", "JupiterDCA")
+    /// Value: Vector of trades from that program
+    pub trades_by_program: HashMap<String, Vec<TradeEvent>>,
 }
 
 /// Internal metrics snapshot computed from rolling windows
@@ -213,6 +218,47 @@ mod signal_thresholds {
     pub const BOT_DROPOFF_NEW_WALLET_MIN: i32 = 3; // Min 3 new wallets entering
 }
 
+/// Compute DCA-to-spot correlation for a token
+///
+/// Measures overlap between Jupiter DCA BUYs and spot BUYs (PumpSwap, BonkSwap, Moonshot)
+/// within a 60-second time window.
+///
+/// Arguments:
+/// - `spot_trades`: BUY trades from spot programs (PumpSwap, BonkSwap, Moonshot)
+/// - `dca_trades`: BUY trades from Jupiter DCA
+/// - `window_secs`: Time window for correlation (default: 60 seconds)
+///
+/// Returns: (overlap_ratio, matched_dca_count)
+/// - overlap_ratio: Percentage of DCA trades with matching spot trades (0.0-1.0)
+/// - matched_dca_count: Number of DCA trades that had overlapping spot activity
+fn compute_dca_correlation(
+    spot_trades: &[TradeEvent],
+    dca_trades: &[TradeEvent],
+    window_secs: i64,
+) -> (f64, usize) {
+    if dca_trades.is_empty() {
+        return (0.0, 0);
+    }
+
+    let mut matched_dca_count = 0;
+
+    // For each DCA trade, check if there's a spot trade within ±window_secs
+    for dca_trade in dca_trades {
+        let dca_ts = dca_trade.timestamp;
+        let has_matching_spot = spot_trades.iter().any(|spot_trade| {
+            let time_diff = (spot_trade.timestamp - dca_ts).abs();
+            time_diff <= window_secs
+        });
+
+        if has_matching_spot {
+            matched_dca_count += 1;
+        }
+    }
+
+    let overlap_ratio = matched_dca_count as f64 / dca_trades.len() as f64;
+    (overlap_ratio, matched_dca_count)
+}
+
 /// Detect trading signals from rolling metrics
 ///
 /// Phase 3-B: Signal Detection Implementation
@@ -222,6 +268,7 @@ mod signal_thresholds {
 /// - FOCUSED: Concentrated buying from few non-bot wallets
 /// - SURGE: Explosive buy volume spike
 /// - BOT_DROPOFF: Sudden bot activity decline opening market
+/// - DCA_CONVICTION: Jupiter DCA BUYs overlap with spot BUYs
 ///
 /// Returns: Vec of detected signals with scores and details
 ///
@@ -235,6 +282,7 @@ fn detect_signals(
     metrics: &RollingMetrics,
     current_timestamp: i64,
     previous_bot_count: Option<i32>, // For BOT_DROPOFF detection
+    trades_by_program: &HashMap<String, Vec<TradeEvent>>, // For DCA_CONVICTION detection
 ) -> Vec<TokenSignal> {
     use signal_thresholds::*;
     
@@ -387,6 +435,57 @@ fn detect_signals(
         }
     }
     
+    // DCA_CONVICTION Detection
+    // Jupiter DCA BUYs overlap with spot BUYs (coordinated accumulation)
+    // Collect spot BUY trades (PumpSwap, BonkSwap, Moonshot)
+    let spot_programs = ["PumpSwap", "BonkSwap", "Moonshot"];
+    let mut spot_buys = Vec::new();
+    for program in &spot_programs {
+        if let Some(trades) = trades_by_program.get(*program) {
+            for trade in trades {
+                if trade.direction == TradeDirection::Buy {
+                    spot_buys.push(trade.clone());
+                }
+            }
+        }
+    }
+    
+    // Collect DCA BUY trades
+    let mut dca_buys = Vec::new();
+    if let Some(dca_trades) = trades_by_program.get("JupiterDCA") {
+        for trade in dca_trades {
+            if trade.direction == TradeDirection::Buy {
+                dca_buys.push(trade.clone());
+            }
+        }
+    }
+    
+    // Compute correlation if we have both spot and DCA activity
+    if !spot_buys.is_empty() && !dca_buys.is_empty() {
+        let (overlap_ratio, matched_count) = compute_dca_correlation(&spot_buys, &dca_buys, 60);
+        
+        // Threshold: 25%+ overlap = DCA_CONVICTION signal
+        if overlap_ratio >= 0.25 {
+            let details = format!(
+                r#"{{"overlap_ratio":{:.2},"dca_buys":{},"spot_buys":{},"matched_dca":{}}}"#,
+                overlap_ratio, dca_buys.len(), spot_buys.len(), matched_count
+            );
+            
+            // Severity based on overlap strength
+            let severity = if overlap_ratio >= 0.5 { 5 }
+                           else if overlap_ratio >= 0.4 { 4 }
+                           else if overlap_ratio >= 0.3 { 3 }
+                           else { 2 };
+            
+            signals.push(
+                TokenSignal::new(mint.to_string(), SignalType::DcaConviction, 60, current_timestamp)
+                    .with_severity(severity)
+                    .with_score(overlap_ratio)
+                    .with_details(details),
+            );
+        }
+    }
+    
     signals
 }
 
@@ -402,6 +501,7 @@ impl TokenRollingState {
             trades_900s: Vec::with_capacity(1500),
             unique_wallets_300s: HashSet::new(),
             bot_wallets_300s: HashSet::new(),
+            trades_by_program: HashMap::new(),
         }
     }
 
@@ -411,6 +511,7 @@ impl TokenRollingState {
     /// - Pushes trade to all three window buffers
     /// - Updates unique_wallets_300s with trade wallet
     /// - Updates bot_wallets_300s with placeholder logic
+    /// - Adds trade to program-specific bucket for DCA correlation
     pub fn add_trade(&mut self, trade: TradeEvent) {
         // Track wallet in 300s window
         self.unique_wallets_300s
@@ -425,6 +526,12 @@ impl TokenRollingState {
         // Placeholder: never mark as bot in Phase 2
         let _is_bot = false;
 
+        // Add to program-specific bucket for DCA correlation
+        self.trades_by_program
+            .entry(trade.source_program.clone())
+            .or_insert_with(Vec::new)
+            .push(trade.clone());
+
         // Add to all window buffers (most recent trades)
         self.trades_60s.push(trade.clone());
         self.trades_300s.push(trade.clone());
@@ -437,6 +544,7 @@ impl TokenRollingState {
     /// - Removes trades outside each window's time range
     /// - Recomputes unique_wallets_300s from remaining trades
     /// - Recomputes bot_wallets_300s from remaining trades
+    /// - Evicts old trades from program-specific buckets
     pub fn evict_old_trades(&mut self, now: i64) {
         let cutoff_60s = now - 60;
         let cutoff_300s = now - 300;
@@ -454,6 +562,11 @@ impl TokenRollingState {
         self.trades_900s
             .retain(|trade| trade.timestamp >= cutoff_900s);
 
+        // Evict from program-specific buckets (use 900s window as longest)
+        for trades in self.trades_by_program.values_mut() {
+            trades.retain(|trade| trade.timestamp >= cutoff_900s);
+        }
+
         // Recompute unique wallets from remaining 300s trades
         self.unique_wallets_300s.clear();
         for trade in &self.trades_300s {
@@ -469,7 +582,7 @@ impl TokenRollingState {
     /// Detect trading signals from current rolling state
     ///
     /// Phase 3-B: Signal Detection
-    /// Analyzes rolling metrics to detect BREAKOUT, FOCUSED, SURGE, BOT_DROPOFF signals
+    /// Analyzes rolling metrics to detect BREAKOUT, FOCUSED, SURGE, BOT_DROPOFF, DCA_CONVICTION signals
     ///
     /// Arguments:
     /// - `current_timestamp`: Current Unix timestamp for signal creation
@@ -482,7 +595,7 @@ impl TokenRollingState {
         previous_bot_count: Option<i32>,
     ) -> Vec<TokenSignal> {
         let metrics = self.compute_rolling_metrics();
-        detect_signals(&self.mint, &metrics, current_timestamp, previous_bot_count)
+        detect_signals(&self.mint, &metrics, current_timestamp, previous_bot_count, &self.trades_by_program)
     }
 
     /// Compute rolling metrics from current window state
@@ -1124,5 +1237,314 @@ mod tests {
 
         // Expect: No BREAKOUT (5.0 is not > 5.0)
         assert!(!signals.iter().any(|s| s.signal_type == SignalType::Breakout));
+    }
+
+    // === DCA_CONVICTION Tests ===
+
+    #[test]
+    fn test_dca_conviction_aligned_trades() {
+        // Scenario: DCA BUYs align with spot BUYs → DCA_CONVICTION signal
+        let mut state = TokenRollingState::new("dca_conviction_mint".to_string());
+        
+        let base_time = 10000;
+        
+        // Add PumpSwap BUY trades
+        for i in 0..10 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 10,
+                mint: "dca_conviction_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 1.0,
+                token_amount: 1000.0,
+                token_decimals: 6,
+                user_account: format!("spot_wallet_{}", i),
+                source_program: "PumpSwap".to_string(),
+            };
+            state.add_trade(trade);
+        }
+        
+        // Add Jupiter DCA BUY trades that overlap with spot trades (within ±60s)
+        for i in 0..5 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 20 + 5, // Offset by 5s (within 60s window)
+                mint: "dca_conviction_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 0.5,
+                token_amount: 500.0,
+                token_decimals: 6,
+                user_account: format!("dca_wallet_{}", i),
+                source_program: "JupiterDCA".to_string(),
+            };
+            state.add_trade(trade);
+        }
+
+        let signals = state.detect_signals(base_time + 120, None);
+
+        // Expect: DCA_CONVICTION detected (all 5 DCA trades overlap with spot trades)
+        assert!(!signals.is_empty(), "Should detect DCA_CONVICTION signal");
+        assert!(signals.iter().any(|s| s.signal_type == SignalType::DcaConviction));
+        
+        let dca_signal = signals.iter().find(|s| s.signal_type == SignalType::DcaConviction).unwrap();
+        assert_eq!(dca_signal.window_seconds, 60);
+        assert!(dca_signal.score.is_some());
+        assert!(dca_signal.score.unwrap() >= 0.25); // Above threshold
+        assert!(dca_signal.details_json.is_some());
+        
+        // Verify details contain expected fields
+        let details = dca_signal.details_json.as_ref().unwrap();
+        assert!(details.contains("overlap_ratio"));
+        assert!(details.contains("dca_buys"));
+        assert!(details.contains("spot_buys"));
+    }
+
+    #[test]
+    fn test_dca_conviction_no_overlap() {
+        // Scenario: DCA BUYs but no overlapping spot BUYs → no signal
+        let mut state = TokenRollingState::new("no_overlap_mint".to_string());
+        
+        let base_time = 10000;
+        
+        // Add PumpSwap BUY trades (early window)
+        for i in 0..5 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 10,
+                mint: "no_overlap_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 1.0,
+                token_amount: 1000.0,
+                token_decimals: 6,
+                user_account: format!("spot_wallet_{}", i),
+                source_program: "PumpSwap".to_string(),
+            };
+            state.add_trade(trade);
+        }
+        
+        // Add Jupiter DCA BUY trades much later (> 60s gap)
+        for i in 0..5 {
+            let trade = TradeEvent {
+                timestamp: base_time + 200 + i * 10, // 200s+ later (outside ±60s window)
+                mint: "no_overlap_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 0.5,
+                token_amount: 500.0,
+                token_decimals: 6,
+                user_account: format!("dca_wallet_{}", i),
+                source_program: "JupiterDCA".to_string(),
+            };
+            state.add_trade(trade);
+        }
+
+        let signals = state.detect_signals(base_time + 300, None);
+
+        // Expect: No DCA_CONVICTION (no overlap)
+        assert!(!signals.iter().any(|s| s.signal_type == SignalType::DcaConviction));
+    }
+
+    #[test]
+    fn test_dca_conviction_below_threshold() {
+        // Scenario: Only 20% DCA overlap (below 25% threshold) → no signal
+        let mut state = TokenRollingState::new("below_threshold_mint".to_string());
+        
+        let base_time = 10000;
+        
+        // Add spot BUY trades
+        for i in 0..3 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 20,
+                mint: "below_threshold_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 1.0,
+                token_amount: 1000.0,
+                token_decimals: 6,
+                user_account: format!("spot_wallet_{}", i),
+                source_program: "BonkSwap".to_string(),
+            };
+            state.add_trade(trade);
+        }
+        
+        // Add 5 DCA trades, only 1 overlaps (20% overlap)
+        for i in 0..5 {
+            let timestamp = if i == 0 {
+                base_time + 10 // First one overlaps
+            } else {
+                base_time + 500 + i * 10 // Rest are far away
+            };
+            
+            let trade = TradeEvent {
+                timestamp,
+                mint: "below_threshold_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 0.5,
+                token_amount: 500.0,
+                token_decimals: 6,
+                user_account: format!("dca_wallet_{}", i),
+                source_program: "JupiterDCA".to_string(),
+            };
+            state.add_trade(trade);
+        }
+
+        let signals = state.detect_signals(base_time + 600, None);
+
+        // Expect: No DCA_CONVICTION (20% < 25% threshold)
+        assert!(!signals.iter().any(|s| s.signal_type == SignalType::DcaConviction));
+    }
+
+    #[test]
+    fn test_dca_conviction_multiple_spot_programs() {
+        // Scenario: DCA overlaps with trades from multiple spot programs
+        let mut state = TokenRollingState::new("multi_spot_mint".to_string());
+        
+        let base_time = 10000;
+        
+        // Add BUYs from all three spot programs
+        let spot_programs = ["PumpSwap", "BonkSwap", "Moonshot"];
+        for (idx, program) in spot_programs.iter().enumerate() {
+            for i in 0..3 {
+                let trade = TradeEvent {
+                    timestamp: base_time + (idx * 30) as i64 + i * 10,
+                    mint: "multi_spot_mint".to_string(),
+                    direction: TradeDirection::Buy,
+                    sol_amount: 1.0,
+                    token_amount: 1000.0,
+                    token_decimals: 6,
+                    user_account: format!("{}_wallet_{}", program, i),
+                    source_program: program.to_string(),
+                };
+                state.add_trade(trade);
+            }
+        }
+        
+        // Add DCA BUYs that overlap with all three programs
+        for i in 0..4 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 25 + 5,
+                mint: "multi_spot_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 0.5,
+                token_amount: 500.0,
+                token_decimals: 6,
+                user_account: format!("dca_wallet_{}", i),
+                source_program: "JupiterDCA".to_string(),
+            };
+            state.add_trade(trade);
+        }
+
+        let signals = state.detect_signals(base_time + 120, None);
+
+        // Expect: DCA_CONVICTION detected (overlap with multiple spot programs)
+        assert!(signals.iter().any(|s| s.signal_type == SignalType::DcaConviction));
+    }
+
+    #[test]
+    fn test_dca_conviction_only_buy_direction() {
+        // Scenario: SELL trades should NOT be considered for DCA_CONVICTION
+        let mut state = TokenRollingState::new("sell_test_mint".to_string());
+        
+        let base_time = 10000;
+        
+        // Add spot SELL trades (should be ignored)
+        for i in 0..5 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 10,
+                mint: "sell_test_mint".to_string(),
+                direction: TradeDirection::Sell, // SELL direction
+                sol_amount: 1.0,
+                token_amount: 1000.0,
+                token_decimals: 6,
+                user_account: format!("spot_wallet_{}", i),
+                source_program: "PumpSwap".to_string(),
+            };
+            state.add_trade(trade);
+        }
+        
+        // Add DCA BUY trades that would overlap if SELLs counted
+        for i in 0..3 {
+            let trade = TradeEvent {
+                timestamp: base_time + i * 10 + 5,
+                mint: "sell_test_mint".to_string(),
+                direction: TradeDirection::Buy,
+                sol_amount: 0.5,
+                token_amount: 500.0,
+                token_decimals: 6,
+                user_account: format!("dca_wallet_{}", i),
+                source_program: "JupiterDCA".to_string(),
+            };
+            state.add_trade(trade);
+        }
+
+        let signals = state.detect_signals(base_time + 60, None);
+
+        // Expect: No DCA_CONVICTION (spot SELLs don't count)
+        assert!(!signals.iter().any(|s| s.signal_type == SignalType::DcaConviction));
+    }
+
+    #[test]
+    fn test_dca_conviction_severity_levels() {
+        // Test severity levels based on overlap ratio
+        // Use exact counts to avoid rounding issues
+        let test_cases = vec![
+            (2, 10, 2),  // 2/10 = 0.20 → below threshold, no signal expected
+            (3, 10, 3),  // 3/10 = 0.30 → severity 3
+            (4, 10, 4),  // 4/10 = 0.40 → severity 4
+            (5, 10, 5),  // 5/10 = 0.50 → severity 5
+        ];
+        
+        for (overlapping_count, total_count, expected_severity) in test_cases {
+            let overlap_ratio = overlapping_count as f64 / total_count as f64;
+            let mut state = TokenRollingState::new(format!("severity_test_{:.2}", overlap_ratio));
+            let base_time = 10000;
+            
+            // Add spot BUYs
+            for i in 0..10 {
+                let trade = TradeEvent {
+                    timestamp: base_time + i * 5,
+                    mint: format!("severity_test_{:.2}", overlap_ratio),
+                    direction: TradeDirection::Buy,
+                    sol_amount: 1.0,
+                    token_amount: 1000.0,
+                    token_decimals: 6,
+                    user_account: format!("spot_{}", i),
+                    source_program: "PumpSwap".to_string(),
+                };
+                state.add_trade(trade);
+            }
+            
+            // Add DCA BUYs with exact overlap count
+            for i in 0..total_count {
+                let timestamp = if i < overlapping_count {
+                    base_time + i as i64 * 5 + 2 // Overlapping
+                } else {
+                    base_time + 500 + i as i64 * 10 // Non-overlapping
+                };
+                
+                let trade = TradeEvent {
+                    timestamp,
+                    mint: format!("severity_test_{:.2}", overlap_ratio),
+                    direction: TradeDirection::Buy,
+                    sol_amount: 0.5,
+                    token_amount: 500.0,
+                    token_decimals: 6,
+                    user_account: format!("dca_{}", i),
+                    source_program: "JupiterDCA".to_string(),
+                };
+                state.add_trade(trade);
+            }
+            
+            let signals = state.detect_signals(base_time + 600, None);
+            
+            // 0.20 ratio is below 0.25 threshold, should NOT emit signal
+            if overlap_ratio < 0.25 {
+                assert!(!signals.iter().any(|s| s.signal_type == SignalType::DcaConviction),
+                    "Overlap ratio {:.2} should NOT emit signal (below threshold)", overlap_ratio);
+            } else {
+                // Above threshold, should emit signal with correct severity
+                if let Some(dca_signal) = signals.iter().find(|s| s.signal_type == SignalType::DcaConviction) {
+                    assert_eq!(dca_signal.severity, expected_severity, 
+                        "Overlap ratio {:.2} should have severity {}", overlap_ratio, expected_severity);
+                } else {
+                    panic!("Expected DCA_CONVICTION signal for ratio {:.2}", overlap_ratio);
+                }
+            }
+        }
     }
 }

@@ -40,7 +40,7 @@
 //! 4. Schedule periodic flush_to_db() for buffered results
 
 use super::db::AggregateDbWriter;
-use super::signals::TokenSignal;
+use super::signals::{SignalType, TokenSignal};
 use super::state::{RollingMetrics, TokenRollingState};
 use super::types::{AggregatedTokenState, TokenMetadata, TradeEvent};
 use std::collections::HashMap;
@@ -60,6 +60,11 @@ pub struct PipelineEngine {
     /// Bot history tracking for BOT_DROPOFF detection
     /// Maps mint -> last known bot_trades_count_300s
     last_bot_counts: HashMap<String, i32>,
+
+    /// Signal deduplication state
+    /// Maps mint -> (SignalType -> is_active)
+    /// A signal is only written when its state transitions from false->true
+    last_signal_state: HashMap<String, HashMap<SignalType, bool>>,
 
     /// Database writer (Phase 3: None, Phase 4: Some)
     /// Kept as Option for Phase 4 activation
@@ -95,6 +100,7 @@ impl PipelineEngine {
         Self {
             states: HashMap::new(),
             last_bot_counts: HashMap::new(),
+            last_signal_state: HashMap::new(),
             db_writer: None, // Phase 3: No database writes
             metadata_cache: HashMap::new(),
             now_fn,
@@ -134,21 +140,23 @@ impl PipelineEngine {
     ///
     /// Returns full pipeline output:
     /// 1. RollingMetrics - Raw aggregated metrics from windows
-    /// 2. Vec<TokenSignal> - Detected signals (BREAKOUT, SURGE, etc.)
+    /// 2. Vec<TokenSignal> - Detected signals (BREAKOUT, SURGE, etc.) - DEDUPLICATED
     /// 3. AggregatedTokenState - SQL-schema-compliant aggregate
     ///
     /// Phase 3: Returns results without database writes
     /// Phase 4: Will also write to database via AggregateDbWriter
+    ///
+    /// Note: This method requires &mut self for signal deduplication.
     ///
     /// # Arguments
     /// * `mint` - Token mint address
     /// * `now` - Current Unix timestamp
     ///
     /// # Returns
-    /// * `Ok((metrics, signals, aggregate))` - Full pipeline output
+    /// * `Ok((metrics, signals, aggregate))` - Full pipeline output (signals are deduplicated)
     /// * `Err(...)` - If token has no state (no trades processed)
     pub fn compute_metrics(
-        &self,
+        &mut self,
         mint: &str,
         now: i64,
     ) -> Result<(RollingMetrics, Vec<TokenSignal>, AggregatedTokenState), Box<dyn std::error::Error>>
@@ -181,7 +189,75 @@ impl PipelineEngine {
         // Build AggregatedTokenState from metrics + metadata
         let aggregate = AggregatedTokenState::from_metrics(mint, &metrics, metadata, last_trade_ts, now);
 
-        Ok((metrics, signals, aggregate))
+        // Deduplicate signals before returning
+        let deduplicated_signals = self.deduplicate_signals(mint, signals);
+
+        Ok((metrics, deduplicated_signals, aggregate))
+    }
+
+    /// Deduplicate signals based on state changes
+    ///
+    /// A signal is only returned if its state has changed:
+    /// - false -> true: Signal starts (WRITE TO DB)
+    /// - true -> true: Signal persists (DO NOT WRITE)
+    /// - true -> false: Signal ends (update state, DO NOT WRITE)
+    /// - false -> false: Signal remains inactive (DO NOT WRITE)
+    ///
+    /// This drastically reduces token_signals table growth by emitting
+    /// each signal only once per trend cycle.
+    ///
+    /// # Arguments
+    /// * `mint` - Token mint address
+    /// * `signals` - Raw signals detected from metrics
+    ///
+    /// # Returns
+    /// * Vector of signals that should be written to database (new signals only)
+    fn deduplicate_signals(&mut self, mint: &str, signals: Vec<TokenSignal>) -> Vec<TokenSignal> {
+        // Get or create signal state for this token
+        let signal_state = self
+            .last_signal_state
+            .entry(mint.to_string())
+            .or_insert_with(HashMap::new);
+
+        // Build set of currently active signal types
+        let mut active_types: HashMap<SignalType, bool> = HashMap::new();
+        for signal in &signals {
+            active_types.insert(signal.signal_type, true);
+        }
+
+        // Filter signals: only return those with state transition false->true
+        let mut new_signals = Vec::new();
+        for signal in signals {
+            let was_active = signal_state.get(&signal.signal_type).copied().unwrap_or(false);
+            let is_active = true; // Signal was detected
+
+            // Only write if transitioning from inactive to active
+            if !was_active && is_active {
+                new_signals.push(signal);
+            }
+        }
+
+        // Update state: set all detected signals to true
+        for signal_type in active_types.keys() {
+            signal_state.insert(*signal_type, true);
+        }
+
+        // Update state: set undetected signals to false (signal ended)
+        // This allows the same signal to be emitted again later
+        let all_signal_types = [
+            SignalType::Breakout,
+            SignalType::Focused,
+            SignalType::Surge,
+            SignalType::BotDropoff,
+            SignalType::DcaConviction,
+        ];
+        for signal_type in &all_signal_types {
+            if !active_types.contains_key(signal_type) {
+                signal_state.insert(*signal_type, false);
+            }
+        }
+
+        new_signals
     }
 
     /// Update bot history for a token
@@ -549,7 +625,7 @@ mod tests {
     fn test_compute_metrics_no_state_error() {
         // Edge case: compute_metrics() on nonexistent mint
         let base_time = 10000;
-        let engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
+        let mut engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
 
         let result = engine.compute_metrics("nonexistent_mint", base_time);
 
@@ -598,5 +674,263 @@ mod tests {
 
         // Verify states are independent
         assert_ne!(agg1.net_flow_60s_sol, agg2.net_flow_60s_sol);
+    }
+
+    #[test]
+    fn test_dedup_breakout_persists() {
+        // Test: BREAKOUT signal is written once, then deduplicated on subsequent calls
+        let base_time = 10000;
+        let mut engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
+
+        let mint = "breakout_dedup_mint";
+
+        // Create BREAKOUT conditions (high volume, many wallets, high buy ratio)
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + i * 3,
+                mint,
+                TradeDirection::Buy,
+                0.5 + (i as f64 * 0.05),
+                &format!("wallet_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // First compute_metrics call - should return BREAKOUT signal
+        let (_m1, signals1, _agg1) = engine.compute_metrics(mint, base_time + 60).unwrap();
+        assert!(!signals1.is_empty(), "First call should detect BREAKOUT");
+        assert!(signals1
+            .iter()
+            .any(|s| s.signal_type == SignalType::Breakout));
+
+        // Add more trades to maintain BREAKOUT conditions
+        for i in 0..10 {
+            let trade = make_trade(
+                base_time + 70 + i * 2,
+                mint,
+                TradeDirection::Buy,
+                0.7,
+                &format!("wallet_{}", i % 5),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Second compute_metrics call - BREAKOUT persists, should NOT return signal
+        let (_m2, signals2, _agg2) = engine.compute_metrics(mint, base_time + 90).unwrap();
+        assert!(
+            signals2.is_empty() || !signals2.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Second call should NOT return BREAKOUT (already active)"
+        );
+    }
+
+    #[test]
+    fn test_dedup_breakout_resets_after_wait() {
+        // Test: BREAKOUT signal can be emitted again after it ends and restarts
+        let base_time = 10000;
+        let mut engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
+
+        let mint = "breakout_reset_mint";
+
+        // Phase 1: Create BREAKOUT conditions
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + i * 3,
+                mint,
+                TradeDirection::Buy,
+                0.6,
+                &format!("wallet_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // First compute_metrics - should return BREAKOUT
+        let (_m1, signals1, _agg1) = engine.compute_metrics(mint, base_time + 60).unwrap();
+        assert!(
+            signals1.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "First BREAKOUT should be detected"
+        );
+
+        // Phase 2: Add only SELL trades to end BREAKOUT
+        for i in 0..10 {
+            let trade = make_trade(
+                base_time + 100 + i * 5,
+                mint,
+                TradeDirection::Sell,
+                0.5,
+                &format!("seller_{}", i),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Second compute_metrics - BREAKOUT should be inactive (no signal returned)
+        let (_m2, signals2, _agg2) = engine.compute_metrics(mint, base_time + 150).unwrap();
+        assert!(
+            !signals2.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "BREAKOUT should be inactive"
+        );
+
+        // Phase 3: Create BREAKOUT conditions AGAIN
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + 200 + i * 3,
+                mint,
+                TradeDirection::Buy,
+                0.7,
+                &format!("new_wallet_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Third compute_metrics - should return BREAKOUT again (false -> true transition)
+        let (_m3, signals3, _agg3) = engine.compute_metrics(mint, base_time + 260).unwrap();
+        assert!(
+            signals3.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Second BREAKOUT should be detected after reset"
+        );
+    }
+
+    #[test]
+    fn test_dedup_multiple_signal_types_per_token() {
+        // Test: Different signal types are tracked independently for same token
+        let base_time = 10000;
+        let mut engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
+
+        let mint = "multi_signal_mint";
+
+        // Phase 1: Create BREAKOUT conditions
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + i * 3,
+                mint,
+                TradeDirection::Buy,
+                0.6,
+                &format!("wallet_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // First call - should detect BREAKOUT (possibly SURGE too)
+        let (_m1, signals1, _agg1) = engine.compute_metrics(mint, base_time + 60).unwrap();
+        let has_breakout_1 = signals1.iter().any(|s| s.signal_type == SignalType::Breakout);
+        let has_surge_1 = signals1.iter().any(|s| s.signal_type == SignalType::Surge);
+
+        assert!(has_breakout_1, "BREAKOUT should be detected");
+
+        // Phase 2: Add more trades to maintain/create multiple signals
+        for i in 0..15 {
+            let trade = make_trade(
+                base_time + 70 + i * 2,
+                mint,
+                TradeDirection::Buy,
+                0.8,
+                &format!("wallet_{}", i % 5),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Second call - signals persist, should NOT be returned
+        let (_m2, signals2, _agg2) = engine.compute_metrics(mint, base_time + 100).unwrap();
+        assert!(
+            !signals2.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "BREAKOUT should not be returned (still active)"
+        );
+
+        // If SURGE was not detected first time but is now, it should be returned
+        // If SURGE was detected first time, it should NOT be returned now
+        let has_surge_2 = signals2.iter().any(|s| s.signal_type == SignalType::Surge);
+        if has_surge_1 {
+            assert!(
+                !has_surge_2,
+                "SURGE should not be returned if it was already active"
+            );
+        }
+        // Note: If SURGE appears now (wasn't active before), it WILL be returned (new signal)
+    }
+
+    #[test]
+    fn test_dedup_no_cross_token_leakage() {
+        // Test: Deduplication state is isolated per token (no cross-token interference)
+        let base_time = 10000;
+        let mut engine = PipelineEngine::new_with_timestamp_fn(Box::new(move || base_time));
+
+        let mint_a = "token_a_dedup";
+        let mint_b = "token_b_dedup";
+
+        // Phase 1: Create BREAKOUT on token A
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + i * 3,
+                mint_a,
+                TradeDirection::Buy,
+                0.6,
+                &format!("wallet_a_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Token A: First call - should return BREAKOUT
+        let (_m1, signals_a1, _agg1) = engine.compute_metrics(mint_a, base_time + 60).unwrap();
+        assert!(
+            signals_a1.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Token A should detect BREAKOUT"
+        );
+
+        // Phase 2: Create BREAKOUT on token B
+        for i in 0..20 {
+            let trade = make_trade(
+                base_time + i * 3,
+                mint_b,
+                TradeDirection::Buy,
+                0.6,
+                &format!("wallet_b_{}", i % 8),
+            );
+            engine.process_trade(trade);
+        }
+
+        // Token B: First call - should return BREAKOUT (independent of token A state)
+        let (_m2, signals_b1, _agg2) = engine.compute_metrics(mint_b, base_time + 60).unwrap();
+        assert!(
+            signals_b1.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Token B should detect BREAKOUT (independent of token A)"
+        );
+
+        // Phase 3: Add more trades to both tokens
+        for i in 0..10 {
+            let trade_a = make_trade(
+                base_time + 70 + i * 2,
+                mint_a,
+                TradeDirection::Buy,
+                0.5,
+                &format!("wallet_a_{}", i),
+            );
+            engine.process_trade(trade_a);
+
+            let trade_b = make_trade(
+                base_time + 70 + i * 2,
+                mint_b,
+                TradeDirection::Buy,
+                0.5,
+                &format!("wallet_b_{}", i),
+            );
+            engine.process_trade(trade_b);
+        }
+
+        // Both tokens: Second call - neither should return BREAKOUT (both already active)
+        let (_m3, signals_a2, _agg3) = engine.compute_metrics(mint_a, base_time + 90).unwrap();
+        let (_m4, signals_b2, _agg4) = engine.compute_metrics(mint_b, base_time + 90).unwrap();
+
+        assert!(
+            !signals_a2.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Token A should not return BREAKOUT (already active)"
+        );
+        assert!(
+            !signals_b2.iter().any(|s| s.signal_type == SignalType::Breakout),
+            "Token B should not return BREAKOUT (already active)"
+        );
+
+        // Verify internal state is separate
+        assert!(engine.last_signal_state.contains_key(mint_a));
+        assert!(engine.last_signal_state.contains_key(mint_b));
+        assert_eq!(engine.last_signal_state.len(), 2);
     }
 }

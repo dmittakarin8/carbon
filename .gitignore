@@ -111,3 +111,8 @@ jspm_packages/
 .Trashes
 ehthumbs.db
 Thumbs.dbstreams/
+
+# Ignore all event streams
+examples/solflow/streams/*
+
+examples/.factory/

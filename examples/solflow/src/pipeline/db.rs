@@ -132,13 +132,12 @@ impl SqliteAggregateWriter {
     ///
     /// Note: Does NOT create database or schema. Caller must ensure database
     /// exists and has schema from `/sql/*.sql` files.
-    ///
-    /// TODO: Phase 4 - Enable WAL mode: PRAGMA journal_mode=WAL
     pub fn new(db_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let conn = Connection::open(db_path)?;
         
-        // TODO: Phase 4 - Enable WAL mode for better concurrency:
-        // conn.execute("PRAGMA journal_mode=WAL", [])?;
+        // Enable WAL mode for better write concurrency
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        log::info!("📘 SQLite: WAL mode enabled");
         
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -171,18 +170,23 @@ impl AggregateDbWriter for SqliteAggregateWriter {
     /// - If mint exists: updates all fields (preserves created_at, updates updated_at)
     /// - If mint doesn't exist: inserts new row
     ///
-    /// TODO: Phase 4 - Implement batch transaction for multiple aggregates
+    /// All aggregates are written in a single transaction for optimal performance.
     async fn write_aggregates(
         &self,
         aggregates: Vec<AggregatedTokenState>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = self.conn.lock().unwrap();
+        // Early return if nothing to write
+        if aggregates.is_empty() {
+            return Ok(());
+        }
 
-        // TODO: Phase 4 - Use single transaction for all aggregates
-        // Currently: separate operation per aggregate (simpler, less performant)
+        let mut conn = self.conn.lock().unwrap();
+
+        // Use single transaction for all aggregates
+        let tx = conn.transaction()?;
 
         for agg in aggregates {
-            conn.execute(
+            tx.execute(
                 r#"
                 INSERT INTO token_aggregates (
                     mint, source_program, last_trade_timestamp,
@@ -244,6 +248,9 @@ impl AggregateDbWriter for SqliteAggregateWriter {
             )?;
         }
 
+        // Commit all writes at once
+        tx.commit()?;
+
         Ok(())
     }
 
@@ -251,26 +258,30 @@ impl AggregateDbWriter for SqliteAggregateWriter {
     ///
     /// Checks mint_blocklist first, then inserts signal if allowed.
     ///
-    /// TODO: Phase 4 - Add write scheduling/buffering to reduce I/O
+    /// Note: For batch signal writes, consider collecting multiple signals
+    /// and calling this within a transaction loop externally.
     async fn write_signal(
         &self,
         signal: TokenSignal,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock().unwrap();
 
         // Validate JSON if present
         if let Some(ref json) = signal.details_json {
             validate_json(json)?;
         }
 
+        // Use transaction for atomic blocklist check + insert
+        let tx = conn.transaction()?;
+
         // Check blocklist
-        let blocked = Self::check_blocklist(&conn, &signal.mint, signal.created_at)?;
+        let blocked = Self::check_blocklist(&tx, &signal.mint, signal.created_at)?;
         if blocked {
             return Err(format!("Mint {} is blocked, signal not written", signal.mint).into());
         }
 
         // Insert signal
-        conn.execute(
+        tx.execute(
             r#"
             INSERT INTO token_signals (
                 mint, signal_type, window_seconds, severity, score, details_json, created_at
@@ -286,6 +297,8 @@ impl AggregateDbWriter for SqliteAggregateWriter {
                 signal.created_at,
             ],
         )?;
+
+        tx.commit()?;
 
         Ok(())
     }

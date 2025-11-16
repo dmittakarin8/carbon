@@ -23,9 +23,10 @@ use solflow::pipeline::{
     db::{run_schema_migrations, AggregateDbWriter, SqliteAggregateWriter},
     engine::PipelineEngine,
     ingestion::start_pipeline_ingestion,
-    scheduler::flush_scheduler_task,
     types::TradeEvent,
 };
+use solflow::streamer_core::{config::{BackendType, StreamerConfig}, run as run_streamer};
+use std::env;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -53,7 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   ├─ Channel buffer: {} trades", config.channel_buffer);
     info!("   ├─ Flush interval: {}ms", config.flush_interval_ms);
     info!("   ├─ Price interval: {}ms", config.price_interval_ms);
-    info!("   └─ Metadata interval: {}ms", config.metadata_interval_ms);
+    info!("   ├─ Metadata interval: {}ms", config.metadata_interval_ms);
+    info!("   └─ Integrated streamers: 4 (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
 
     // Initialize database
     info!("🔧 Initializing database...");
@@ -76,76 +78,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel::<TradeEvent>(config.channel_buffer);
     info!("✅ Trade channel created (buffer: {})", config.channel_buffer);
 
-    // Phase 4.2: Example of how to spawn streamers with pipeline integration
-    // Uncomment and modify when ready to activate dual-channel streaming
+    // Phase 4.2b: Spawn all streamers with pipeline integration
+    info!("🚀 Spawning streamers with pipeline integration...");
     
-    /* EXAMPLE: Spawn PumpSwap streamer with pipeline channel
-    
-    use solflow::streamer_core::{config::BackendType, StreamerConfig};
-    
-    let pumpswap_config = StreamerConfig {
-        program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),
-        program_name: "PumpSwap".to_string(),
-        output_path: std::env::var("PUMPSWAP_OUTPUT_PATH")
-            .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
-        backend: BackendType::Jsonl,
-        pipeline_tx: Some(tx.clone()), // Enable dual-channel streaming
-    };
-    
+    // Streamer 1: PumpSwap
+    let tx_pump = tx.clone();
     tokio::spawn(async move {
-        info!("🚀 Starting PumpSwap streamer with pipeline integration");
-        if let Err(e) = solflow::streamer_core::run(pumpswap_config).await {
+        info!("   ├─ Starting PumpSwap streamer with pipeline connected");
+        let streamer_config = StreamerConfig {
+            program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),
+            program_name: "PumpSwap".to_string(),
+            output_path: env::var("PUMPSWAP_OUTPUT_PATH")
+                .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
+            backend: BackendType::Jsonl,
+            pipeline_tx: Some(tx_pump),
+        };
+        if let Err(e) = run_streamer(streamer_config).await {
             error!("❌ PumpSwap streamer failed: {}", e);
         }
     });
     
-    // Repeat for other streamers (BonkSwap, Moonshot, JupiterDCA)...
-    */
+    // Streamer 2: BonkSwap
+    let tx_bonk = tx.clone();
+    tokio::spawn(async move {
+        info!("   ├─ Starting BonkSwap streamer with pipeline connected");
+        let streamer_config = StreamerConfig {
+            program_id: "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj".to_string(),
+            program_name: "BonkSwap".to_string(),
+            output_path: env::var("BONKSWAP_OUTPUT_PATH")
+                .unwrap_or_else(|_| "streams/bonkswap/events.jsonl".to_string()),
+            backend: BackendType::Jsonl,
+            pipeline_tx: Some(tx_bonk),
+        };
+        if let Err(e) = run_streamer(streamer_config).await {
+            error!("❌ BonkSwap streamer failed: {}", e);
+        }
+    });
     
-    info!("⚠️  Note: Streamer spawning currently disabled (see commented code above)");
-    info!("   └─ To activate: Uncomment streamer spawn code in pipeline_runtime.rs");
-    info!("   └─ This will enable dual-channel streaming to pipeline");
+    // Streamer 3: Moonshot
+    let tx_moon = tx.clone();
+    tokio::spawn(async move {
+        info!("   ├─ Starting Moonshot streamer with pipeline connected");
+        let streamer_config = StreamerConfig {
+            program_id: "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG".to_string(),
+            program_name: "Moonshot".to_string(),
+            output_path: env::var("MOONSHOT_OUTPUT_PATH")
+                .unwrap_or_else(|_| "streams/moonshot/events.jsonl".to_string()),
+            backend: BackendType::Jsonl,
+            pipeline_tx: Some(tx_moon),
+        };
+        if let Err(e) = run_streamer(streamer_config).await {
+            error!("❌ Moonshot streamer failed: {}", e);
+        }
+    });
+    
+    // Streamer 4: Jupiter DCA
+    let tx_jup = tx.clone();
+    tokio::spawn(async move {
+        info!("   └─ Starting JupiterDCA streamer with pipeline connected");
+        let streamer_config = StreamerConfig {
+            program_id: "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M".to_string(),
+            program_name: "JupiterDCA".to_string(),
+            output_path: env::var("JUPITER_DCA_OUTPUT_PATH")
+                .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string()),
+            backend: BackendType::Jsonl,
+            pipeline_tx: Some(tx_jup),
+        };
+        if let Err(e) = run_streamer(streamer_config).await {
+            error!("❌ JupiterDCA streamer failed: {}", e);
+        }
+    });
+    
+    info!("✅ All 4 streamers spawned and connected to pipeline");
 
     // Spawn background tasks
     info!("🚀 Spawning background tasks...");
 
-    // Task 1: Ingestion (processes trades from channel)
+    // Task 1: Ingestion (processes trades from channel + unified flush loop)
     let engine_ingestion = engine.clone();
     let db_writer_ingestion = db_writer.clone();
     let flush_interval = config.flush_interval_ms;
     tokio::spawn(async move {
         start_pipeline_ingestion(rx, engine_ingestion, db_writer_ingestion, flush_interval).await;
     });
-    info!("   ├─ ✅ Ingestion task spawned");
-
-    // Task 2: Flush scheduler (periodic aggregate writes)
-    let engine_flush = engine.clone();
-    let db_writer_flush = db_writer.clone();
-    let flush_interval_scheduler = config.flush_interval_ms;
-    tokio::spawn(async move {
-        flush_scheduler_task(engine_flush, db_writer_flush, flush_interval_scheduler).await;
-    });
-    info!("   ├─ ✅ Flush scheduler spawned");
-
-    // Task 3: Price scheduler (TODO: Phase 4.1)
-    // tokio::spawn(async move {
-    //     price_scheduler_task(engine.clone(), db_writer.clone(), config.price_interval_ms).await;
-    // });
-    info!("   ├─ ⏸️  Price scheduler (Phase 4.1)");
-
-    // Task 4: Metadata scheduler (TODO: Phase 4.1)
-    // tokio::spawn(async move {
-    //     metadata_scheduler_task(engine.clone(), db_writer.clone(), config.metadata_interval_ms).await;
-    // });
-    info!("   └─ ⏸️  Metadata scheduler (Phase 4.1)");
+    info!("   └─ ✅ Ingestion task spawned (includes unified flush loop)");
 
     info!("✅ All background tasks running");
     info!("");
     info!("📊 Pipeline Status:");
-    info!("   ├─ Ingestion: READY (waiting for trades)");
-    info!("   ├─ Flush: ACTIVE (every {}ms)", config.flush_interval_ms);
-    info!("   ├─ Price: DISABLED (Phase 4.1)");
-    info!("   └─ Metadata: DISABLED (Phase 4.1)");
+    info!("   ├─ Ingestion: READY (unified flush every {}ms)", config.flush_interval_ms);
+    info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
     info!("");
     info!("🔄 Press CTRL+C to shutdown gracefully");
 
