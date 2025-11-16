@@ -12,6 +12,7 @@ mod trade_extractor;
 mod ui;
 
 pub mod streamer_core;
+pub mod pipeline;
 
 use {
     async_trait::async_trait,

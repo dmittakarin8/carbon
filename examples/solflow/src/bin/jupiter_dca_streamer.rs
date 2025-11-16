@@ -43,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         program_name: "JupiterDCA".to_string(),
         output_path,
         backend,
+        pipeline_tx: None, // Phase 4.2: Set by pipeline_runtime when enabled
     };
 
     config.validate()?;
