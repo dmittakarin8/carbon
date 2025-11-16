@@ -1,4 +1,4 @@
-<!-- 7982c666-87a9-46ee-bf83-89fa40a8f72a a5fb773b-4ce9-43c4-b135-e3fa65b82f50 -->
+<!-- 96d03758-6a2a-4cbd-b315-7fd8e9515ef5 7f39c94d-e10a-45a7-88c6-34be00423565 -->
 # Next.js Dashboard - Single Page with Available Metrics
 
 ## Architecture Overview
@@ -9,8 +9,14 @@
 - **API:** Next.js API Routes (direct SQLite access)
 - **Database:** SQLite at `/var/lib/solflow/solflow.db`
 - **SQLite Library:** `better-sqlite3` (synchronous, fast for local use)
-- **Charts:** Recharts (for sparklines)
-- **UI:** Tailwind CSS + shadcn/ui components
+- **Charts:** Recharts (for sparklines matching Uniswap-style design)
+- **UI:** Tailwind CSS + shadcn/ui components (Table, Button, Badge, Dialog, Toast)
+- **Design System:** Dark theme matching Uniswap token dashboard aesthetic
+  - Sparklines: Green for positive/neutral net flow, red for negative net flow
+  - Sparklines: Smooth curves, no visible axes, ~100px wide × 20px tall
+  - Table: Clean rows with token data, sortable headers, embedded sparklines
+  - Colors: Green (#10B981 or similar) for positive, red (#EF4444 or similar) for negative
+  - Typography: Clean, readable fonts with proper contrast on dark background
 
 **Location:** `/home/dgem8/projects/carbon/examples/solflow/frontend/`
 
@@ -25,9 +31,9 @@
 - `net_flow_60s_sol` - 1-minute net flow
 - `net_flow_300s_sol` - 5-minute net flow
 - `net_flow_900s_sol` - 15-minute net flow
-- `net_flow_3600s_sol` - 1-hour net flow ⭐ NEW
-- `net_flow_7200s_sol` - 2-hour net flow ⭐ NEW
-- `net_flow_14400s_sol` - 4-hour net flow ⭐ NEW
+- `net_flow_3600s_sol` - 1-hour net flow
+- `net_flow_7200s_sol` - 2-hour net flow
+- `net_flow_14400s_sol` - 4-hour net flow
 
 **Available Metrics:**
 
@@ -60,22 +66,18 @@
 
 **User Requested:** 15m, 1h, 2h, 4h windows
 
-**Available:** 60s, 300s, 900s windows
+**Available:** 60s, 300s, 900s, 3600s, 7200s, 14400s windows
 
 **Mapping:**
 
-- **15m** → Use `net_flow_900s_sol` (900s = 15 minutes) ✅ Exact match
-- **1h** → Approximate from `net_flow_900s_sol` trend OR aggregate multiple 900s windows (if historical data available)
-- **2h** → Approximate from trend OR aggregate
-- **4h** → Approximate from trend OR aggregate
+- **1m** → Use `net_flow_60s_sol` (60s = 1 minute) - Exact match
+- **5m** → Use `net_flow_300s_sol` (300s = 5 minutes) - Exact match
+- **15m** → Use `net_flow_900s_sol` (900s = 15 minutes) - Exact match
+- **1h** → Use `net_flow_3600s_sol` (3600s = 1 hour) - Exact match
+- **2h** → Use `net_flow_7200s_sol` (7200s = 2 hours) - Exact match
+- **4h** → Use `net_flow_14400s_sol` (14400s = 4 hours) - Exact match
 
-**Alternative:** If user needs exact 1h/2h/4h windows, must run separate `aggregator` binary which outputs to JSONL files (`streams/aggregates/*.jsonl`). Frontend would need to read JSONL files instead of SQLite.
-
-**Recommendation:** Start with available windows (60s/300s/900s) and show 900s as "15m". For 1h/2h/4h, either:
-
-1. Show "N/A - requires aggregator binary" message
-2. Read from JSONL files if aggregator is running
-3. Approximate from available data
+**All requested windows are available directly from the database schema.**
 
 ## Iteration 1: Single Dashboard + Blocking
 
@@ -128,6 +130,9 @@ SELECT
     SUM(net_flow_60s_sol) as net_flow_60s,
     SUM(net_flow_300s_sol) as net_flow_300s,
     SUM(net_flow_900s_sol) as net_flow_900s,
+    SUM(net_flow_3600s_sol) as net_flow_3600s,
+    SUM(net_flow_7200s_sol) as net_flow_7200s,
+    SUM(net_flow_14400s_sol) as net_flow_14400s,
     SUM(buy_count_300s) as total_buys_300s,
     SUM(sell_count_300s) as total_sells_300s,
     SUM(CASE WHEN source_program = 'JupiterDCA' THEN buy_count_300s ELSE 0 END) as dca_buys_300s,
@@ -155,6 +160,9 @@ LIMIT 100;
     netFlow60s: number;      // 1-minute net flow
     netFlow300s: number;     // 5-minute net flow (primary sort)
     netFlow900s: number;     // 15-minute net flow
+    netFlow3600s: number;   // 1-hour net flow
+    netFlow7200s: number;   // 2-hour net flow
+    netFlow14400s: number;  // 4-hour net flow
     totalBuys300s: number;
     totalSells300s: number;
     dcaBuys300s: number;     // DCA buy count (JupiterDCA only)
@@ -216,12 +224,15 @@ LIMIT 100;
 2. **Net Flow 1m** (`netFlow60s`, sortable, colored: green positive, red negative)
 3. **Net Flow 5m** (`netFlow300s`, sortable, colored, default sort column)
 4. **Net Flow 15m** (`netFlow900s`, sortable, colored)
-5. **DCA Activity** (show `dcaBuys300s` count and `dcaNetFlow300s` SOL - note: not overlap %)
-6. **Sparkline** (mini chart showing net flow trend over time)
-7. **Signal** (badge from `token_signals` - show most recent signal for this mint)
-8. **Wallets** (`maxUniqueWallets` - unique trader count)
-9. **Volume** (`totalVolume300s` - total volume in SOL)
-10. **Block** (button to block/unblock)
+5. **Net Flow 1h** (`netFlow3600s`, sortable, colored)
+6. **Net Flow 2h** (`netFlow7200s`, sortable, colored)
+7. **Net Flow 4h** (`netFlow14400s`, sortable, colored)
+8. **DCA Activity** (show `dcaBuys300s` count and `dcaNetFlow300s` SOL - note: not overlap %)
+9. **Sparkline** (mini chart showing net flow trend over time)
+10. **Signal** (badge from `token_signals` - show most recent signal for this mint)
+11. **Wallets** (`maxUniqueWallets` - unique trader count)
+12. **Volume** (`totalVolume300s` - total volume in SOL)
+13. **Block** (button to block/unblock)
 
 **Components:**
 
@@ -233,8 +244,8 @@ LIMIT 100;
 
 **Window Display:**
 
-- Show available windows: "1m", "5m", "15m" (map to 60s, 300s, 900s)
-- For requested "1h/2h/4h": Show "N/A" or read from aggregator JSONL if available
+- Show all available windows: "1m", "5m", "15m", "1h", "2h", "4h" (map to 60s, 300s, 900s, 3600s, 7200s, 14400s)
+- All windows are exact matches from database columns
 
 **DCA Display:**
 
@@ -251,7 +262,7 @@ LIMIT 100;
 **Sorting:**
 
 - Default: Sort by `netFlow300s` DESC (5-minute net flow)
-- User can click column headers to sort by any timeframe
+- User can click column headers to sort by any timeframe (1m, 5m, 15m, 1h, 2h, 4h)
 - Maintain sort state in URL query params or local state
 
 ## Technical Considerations
@@ -276,7 +287,6 @@ LIMIT 100;
 - Database connection errors → 500 response
 - Missing token → 404 response
 - Blocklist write failures → 500 response with error message
-- Missing aggregator data → Show "N/A" gracefully
 
 ### Security (Local Use)
 
@@ -337,10 +347,10 @@ LIMIT 100;
 
 1. Create feature branch: `git checkout -b feature/nextjs-frontend`
 2. Start Next.js dev server: `cd frontend && npm run dev`
-3. Verify dashboard loads token table with columns (1m, 5m, 15m net flow)
+3. Verify dashboard loads token table with columns (1m, 5m, 15m, 1h, 2h, 4h net flow)
 4. Verify DCA activity displays (buy count and net flow from JupiterDCA)
 5. Verify sparklines render for each token (or show placeholder)
-6. Click column header → verify sorting works for each timeframe
+6. Click column header → verify sorting works for each timeframe (1m, 5m, 15m, 1h, 2h, 4h)
 7. Click "Block" button → verify token disappears from list
 8. Check database → verify `mint_blocklist` row inserted
 9. Verify auto-refresh updates data every 5-10 seconds
@@ -348,7 +358,7 @@ LIMIT 100;
 
 **Database Verification:**
 
-- Query token_aggregates: `SELECT mint, net_flow_300s_sol, source_program FROM token_aggregates WHERE updated_at > unixepoch() - 60 LIMIT 10`
+- Query token_aggregates: `SELECT mint, net_flow_300s_sol, net_flow_3600s_sol, net_flow_7200s_sol, net_flow_14400s_sol, source_program FROM token_aggregates WHERE updated_at > unixepoch() - 60 LIMIT 10`
 - Verify DCA data: `SELECT mint, buy_count_300s, net_flow_300s_sol FROM token_aggregates WHERE source_program = 'JupiterDCA' LIMIT 10`
 - Verify blocklist filtering works correctly
 
@@ -356,18 +366,12 @@ LIMIT 100;
 
 **Missing Features (Require Backend Changes):**
 
-1. **1h/2h/4h Windows:** Not available in primary pipeline. Options:
-
-   - Run separate `aggregator` binary and read from JSONL files
-   - Approximate from available 900s data
-   - Show "N/A" message
-
-2. **DCA Overlap %:** Not available in primary pipeline. Options:
+1. **DCA Overlap %:** Not available in primary pipeline. Options:
 
    - Run separate `aggregator` binary and read from JSONL files
    - Show DCA activity counts/volume only (not correlation %)
 
-3. **Historical Sparklines:** Limited by `token_signals` table. Options:
+2. **Historical Sparklines:** Limited by `token_signals` table. Options:
 
    - Query `token_signals.details_json` for historical net flow
    - Track `token_aggregates.updated_at` changes (limited history)
@@ -379,3 +383,16 @@ LIMIT 100;
 2. **Iteration 2:** Metadata enrichment (on-demand button for token details)
 3. **Iteration 3:** Advanced filtering (signal type, volume thresholds)
 4. **Iteration 4:** Export functionality (CSV, JSON)
+
+### To-dos
+
+- [ ] Initialize Next.js project in frontend/ directory with TypeScript, Tailwind CSS, and required dependencies
+- [ ] Create lib/db.ts for SQLite connection singleton and lib/queries.ts with SQL query functions including all 6 time windows (60s, 300s, 900s, 3600s, 7200s, 14400s)
+- [ ] Create lib/types.ts with TypeScript interfaces matching the API response format including all 6 net flow fields
+- [ ] Create app/api/tokens/route.ts with SQL query that includes SUM(net_flow_3600s_sol), SUM(net_flow_7200s_sol), SUM(net_flow_14400s_sol) in addition to existing windows
+- [ ] Create app/api/sparkline/[mint]/route.ts for historical net flow data
+- [ ] Create app/api/tokens/[mint]/block/route.ts and unblock/route.ts for blocking functionality
+- [ ] Create app/components/TokenDashboard.tsx with table columns for all 6 time windows (1m, 5m, 15m, 1h, 2h, 4h) with sortable headers
+- [ ] Create app/components/NetFlowSparkline.tsx using Recharts for mini line charts
+- [ ] Create app/components/BlockButton.tsx with confirmation modal and API integration
+- [ ] Create app/page.tsx that renders TokenDashboard with auto-refresh every 5-10 seconds
