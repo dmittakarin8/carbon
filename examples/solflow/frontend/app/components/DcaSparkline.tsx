@@ -1,53 +1,47 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { LineChart, Line, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import { DcaSparklineResponse } from '@/lib/types';
+/**
+ * DcaSparkline - Static DCA activity visualization
+ * 
+ * Phase 6: DCA Rolling Windows (feature/dca-rolling-windows)
+ * 
+ * Replaced dynamic sparkline with static bar chart showing DCA activity
+ * across 5 time windows (60s, 300s, 900s, 3600s, 14400s).
+ * 
+ * Data source: token_aggregates.dca_buys_* columns (no database query needed)
+ * 
+ * Why static?
+ * - Eliminates per-token database queries (1 query per mint → 0 queries)
+ * - Uses pre-aggregated data from pipeline (already computed)
+ * - Reduces page load time significantly (40 tokens × 100ms = 4s saved)
+ * - More accurate: reflects actual pipeline state, not reconstructed data
+ */
 
 interface DcaSparklineProps {
-  mint: string;
+  dcaBuys60s: number;
+  dcaBuys300s: number;
+  dcaBuys900s: number;
+  dcaBuys3600s: number;
+  dcaBuys14400s: number;
   width?: number;
   height?: number;
 }
 
 export default function DcaSparkline({
-  mint,
+  dcaBuys60s,
+  dcaBuys300s,
+  dcaBuys900s,
+  dcaBuys3600s,
+  dcaBuys14400s,
   width = 100,
   height = 20,
 }: DcaSparklineProps) {
-  const [data, setData] = useState<DcaSparklineResponse['dataPoints']>([]);
-  const [loading, setLoading] = useState(true);
+  // Build 5-bar mini chart (60s, 300s, 900s, 3600s, 14400s)
+  const values = [dcaBuys60s, dcaBuys300s, dcaBuys900s, dcaBuys3600s, dcaBuys14400s];
+  const maxValue = Math.max(...values, 1); // Avoid division by zero
+  const hasActivity = values.some(v => v > 0);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const response = await fetch(`/api/dca-sparkline/${mint}`);
-        if (response.ok) {
-          const result: DcaSparklineResponse = await response.json();
-          setData(result.dataPoints);
-        }
-      } catch (error) {
-        console.error('Error fetching DCA sparkline data:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-  }, [mint]);
-
-  if (loading) {
-    return (
-      <div
-        className="flex items-center justify-center text-gray-500 text-xs"
-        style={{ width, height }}
-      >
-        ...
-      </div>
-    );
-  }
-
-  if (data.length === 0) {
+  if (!hasActivity) {
     return (
       <div
         className="flex items-center justify-center text-gray-500 text-xs"
@@ -58,29 +52,30 @@ export default function DcaSparkline({
     );
   }
 
-  // For DCA buys, we always use green color (positive activity)
+  // Color: green for DCA activity (positive signal)
   const color = '#10B981';
 
-  // Transform data for Recharts (needs array of objects with value property)
-  const chartData = data.map((point) => ({
-    value: point.buyCount,
-  }));
-
   return (
-    <ResponsiveContainer width={width} height={height}>
-      <LineChart data={chartData} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
-        <XAxis hide={true} />
-        <YAxis hide={true} />
-        <Line
-          type="monotone"
-          dataKey="value"
-          stroke={color}
-          strokeWidth={1.5}
-          dot={false}
-          isAnimationActive={false}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <div
+      className="flex items-end justify-between gap-0.5"
+      style={{ width, height }}
+    >
+      {values.map((value, index) => {
+        const barHeight = (value / maxValue) * height;
+        return (
+          <div
+            key={index}
+            className="flex-1"
+            style={{
+              height: `${barHeight}px`,
+              backgroundColor: value > 0 ? color : '#E5E7EB',
+              minHeight: value > 0 ? '2px' : '1px',
+            }}
+            title={`Window ${index + 1}: ${value} DCA buys`}
+          />
+        );
+      })}
+    </div>
   );
 }
 

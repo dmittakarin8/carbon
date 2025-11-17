@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS token_aggregates (
     avg_trade_size_300s_sol REAL,
     volume_300s_sol         REAL,
 
+    -- DCA buy counts (rolling windows)
+    dca_buys_60s            INTEGER NOT NULL DEFAULT 0,
+    dca_buys_300s           INTEGER NOT NULL DEFAULT 0,
+    dca_buys_900s           INTEGER NOT NULL DEFAULT 0,
+    dca_buys_3600s          INTEGER NOT NULL DEFAULT 0,
+    dca_buys_14400s         INTEGER NOT NULL DEFAULT 0,
+
     updated_at              INTEGER NOT NULL,
     created_at              INTEGER NOT NULL
 );
@@ -43,3 +50,6 @@ CREATE INDEX IF NOT EXISTS idx_token_aggregates_source_program
 
 CREATE INDEX IF NOT EXISTS idx_token_aggregates_netflow_300s
     ON token_aggregates (net_flow_300s_sol DESC);
+
+CREATE INDEX IF NOT EXISTS idx_token_aggregates_dca_buys_3600s
+    ON token_aggregates (dca_buys_3600s DESC);

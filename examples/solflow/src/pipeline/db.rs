@@ -220,9 +220,10 @@ impl AggregateDbWriter for SqliteAggregateWriter {
                         buy_count_900s, sell_count_900s,
                         unique_wallets_300s, bot_trades_300s, bot_wallets_300s,
                         avg_trade_size_300s_sol, volume_300s_sol,
+                        dca_buys_60s, dca_buys_300s, dca_buys_900s, dca_buys_3600s, dca_buys_14400s,
                         price_usd, price_sol, market_cap_usd,
                         updated_at, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(mint) DO UPDATE SET
                         source_program = excluded.source_program,
                         last_trade_timestamp = excluded.last_trade_timestamp,
@@ -243,6 +244,11 @@ impl AggregateDbWriter for SqliteAggregateWriter {
                         bot_wallets_300s = excluded.bot_wallets_300s,
                         avg_trade_size_300s_sol = excluded.avg_trade_size_300s_sol,
                         volume_300s_sol = excluded.volume_300s_sol,
+                        dca_buys_60s = excluded.dca_buys_60s,
+                        dca_buys_300s = excluded.dca_buys_300s,
+                        dca_buys_900s = excluded.dca_buys_900s,
+                        dca_buys_3600s = excluded.dca_buys_3600s,
+                        dca_buys_14400s = excluded.dca_buys_14400s,
                         price_usd = excluded.price_usd,
                         price_sol = excluded.price_sol,
                         market_cap_usd = excluded.market_cap_usd,
@@ -269,6 +275,11 @@ impl AggregateDbWriter for SqliteAggregateWriter {
                         agg.bot_wallets_300s,
                         agg.avg_trade_size_300s_sol,
                         agg.volume_300s_sol,
+                        agg.dca_buys_60s,
+                        agg.dca_buys_300s,
+                        agg.dca_buys_900s,
+                        agg.dca_buys_3600s,
+                        agg.dca_buys_14400s,
                         agg.price_usd,
                         agg.price_sol,
                         agg.market_cap_usd,
@@ -472,6 +483,12 @@ mod tests {
             bot_wallets_300s: Some(2),
             avg_trade_size_300s_sol: Some(0.5),
             volume_300s_sol: Some(15.0),
+            // Phase 6: DCA Rolling Windows
+            dca_buys_60s: Some(1),
+            dca_buys_300s: Some(3),
+            dca_buys_900s: Some(7),
+            dca_buys_3600s: Some(15),
+            dca_buys_14400s: Some(25),
             updated_at,
             created_at: updated_at - 1000,
         }

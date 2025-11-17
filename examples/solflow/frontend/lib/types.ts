@@ -8,8 +8,14 @@ export interface TokenMetrics {
   netFlow14400s: number;   // 4-hour net flow
   totalBuys300s: number;
   totalSells300s: number;
-  dcaBuys300s: number;     // DCA conviction signals (1h)
-  rawDcaBuys1h: number;    // Raw DCA buy count from trades (1h)
+  dcaBuys300s: number;     // DCA conviction signals (1h) - DEPRECATED
+  rawDcaBuys1h: number;    // Raw DCA buy count from trades (1h) - DEPRECATED
+  // Phase 6: DCA Rolling Windows (replacing rawDcaBuys1h and dcaBuys300s)
+  dcaBuys60s: number;      // DCA buys in last 60 seconds
+  dcaBuys300sWindow: number;   // DCA buys in last 300 seconds
+  dcaBuys900s: number;     // DCA buys in last 900 seconds
+  dcaBuys3600s: number;    // DCA buys in last 3600 seconds (1 hour)
+  dcaBuys14400s: number;   // DCA buys in last 14400 seconds (4 hours)
   maxUniqueWallets: number;
   totalVolume300s: number;
   lastUpdate: number;

@@ -6,7 +6,7 @@
 
 use super::types::{TradeDirection, TradeEvent};
 use super::signals::{SignalType, TokenSignal};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Per-token rolling state container
 ///
@@ -53,6 +53,17 @@ pub struct TokenRollingState {
     /// Key: source_program (e.g., "PumpSwap", "BonkSwap", "Moonshot", "JupiterDCA")
     /// Value: Vector of trades from that program
     pub trades_by_program: HashMap<String, Vec<TradeEvent>>,
+
+    /// DCA rolling windows: timestamps of JupiterDCA BUY trades
+    /// Phase 6: DCA Rolling Windows (feature/dca-rolling-windows)
+    ///
+    /// These VecDeques store only timestamps (i64) for efficient memory usage.
+    /// Timestamps are appended on each JupiterDCA BUY trade and pruned based on window duration.
+    pub dca_timestamps_60s: VecDeque<i64>,
+    pub dca_timestamps_300s: VecDeque<i64>,
+    pub dca_timestamps_900s: VecDeque<i64>,
+    pub dca_timestamps_3600s: VecDeque<i64>,
+    pub dca_timestamps_14400s: VecDeque<i64>,
 }
 
 /// Internal metrics snapshot computed from rolling windows
@@ -87,6 +98,14 @@ pub struct RollingMetrics {
     // Bot detection metrics (Phase 3-A)
     pub bot_wallets_count_300s: i32,
     pub bot_trades_count_300s: i32,
+
+    // DCA buy counts (rolling windows)
+    // Phase 6: DCA Rolling Windows
+    pub dca_buys_60s: i32,
+    pub dca_buys_300s: i32,
+    pub dca_buys_900s: i32,
+    pub dca_buys_3600s: i32,
+    pub dca_buys_14400s: i32,
 }
 
 /// Bot detection heuristics applied to a trade window
@@ -525,6 +544,12 @@ impl TokenRollingState {
             unique_wallets_300s: HashSet::new(),
             bot_wallets_300s: HashSet::new(),
             trades_by_program: HashMap::new(),
+            // Phase 6: DCA Rolling Windows
+            dca_timestamps_60s: VecDeque::with_capacity(10),
+            dca_timestamps_300s: VecDeque::with_capacity(50),
+            dca_timestamps_900s: VecDeque::with_capacity(150),
+            dca_timestamps_3600s: VecDeque::with_capacity(600),
+            dca_timestamps_14400s: VecDeque::with_capacity(2400),
         }
     }
 
@@ -536,6 +561,7 @@ impl TokenRollingState {
     /// - Updates bot_wallets_300s with placeholder logic
     /// - Adds trade to program-specific bucket for DCA correlation
     /// Phase 5: Updates last_seen_ts for pruning
+    /// Phase 6: Appends DCA timestamps for JupiterDCA BUY trades
     pub fn add_trade(&mut self, trade: TradeEvent) {
         // Phase 5: Update last seen timestamp for pruning
         self.last_seen_ts = trade.timestamp;
@@ -559,6 +585,17 @@ impl TokenRollingState {
             .or_insert_with(Vec::new)
             .push(trade.clone());
 
+        // Phase 6: Track DCA BUY timestamps for rolling windows
+        // Only track JupiterDCA BUY trades (not sells, not other programs)
+        if trade.source_program == "JupiterDCA" && trade.direction == TradeDirection::Buy {
+            let timestamp = trade.timestamp;
+            self.dca_timestamps_60s.push_back(timestamp);
+            self.dca_timestamps_300s.push_back(timestamp);
+            self.dca_timestamps_900s.push_back(timestamp);
+            self.dca_timestamps_3600s.push_back(timestamp);
+            self.dca_timestamps_14400s.push_back(timestamp);
+        }
+
         // Add to all window buffers (most recent trades)
         self.trades_60s.push(trade.clone());
         self.trades_300s.push(trade.clone());
@@ -575,6 +612,7 @@ impl TokenRollingState {
     /// - Recomputes unique_wallets_300s from remaining trades
     /// - Recomputes bot_wallets_300s from remaining trades
     /// - Evicts old trades from program-specific buckets
+    /// Phase 6: Prunes DCA timestamps outside each window
     pub fn evict_old_trades(&mut self, now: i64) {
         let cutoff_60s = now - 60;
         let cutoff_300s = now - 300;
@@ -582,6 +620,43 @@ impl TokenRollingState {
         let cutoff_3600s = now - 3600;
         let cutoff_7200s = now - 7200;
         let cutoff_14400s = now - 14400;
+
+        // Phase 6: Prune DCA timestamps from front of queues (oldest first)
+        while let Some(&ts) = self.dca_timestamps_60s.front() {
+            if ts < cutoff_60s {
+                self.dca_timestamps_60s.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&ts) = self.dca_timestamps_300s.front() {
+            if ts < cutoff_300s {
+                self.dca_timestamps_300s.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&ts) = self.dca_timestamps_900s.front() {
+            if ts < cutoff_900s {
+                self.dca_timestamps_900s.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&ts) = self.dca_timestamps_3600s.front() {
+            if ts < cutoff_3600s {
+                self.dca_timestamps_3600s.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&ts) = self.dca_timestamps_14400s.front() {
+            if ts < cutoff_14400s {
+                self.dca_timestamps_14400s.pop_front();
+            } else {
+                break;
+            }
+        }
 
         // Evict from 60s window
         self.trades_60s
@@ -694,6 +769,13 @@ impl TokenRollingState {
         // Phase 3-A: Detect bot wallets in 300s window
         let (bot_wallets, bot_trades_count) = detect_bot_wallets(&self.trades_300s);
 
+        // Phase 6: DCA buy counts from timestamp queues
+        let dca_buys_60s = self.dca_timestamps_60s.len() as i32;
+        let dca_buys_300s = self.dca_timestamps_300s.len() as i32;
+        let dca_buys_900s = self.dca_timestamps_900s.len() as i32;
+        let dca_buys_3600s = self.dca_timestamps_3600s.len() as i32;
+        let dca_buys_14400s = self.dca_timestamps_14400s.len() as i32;
+
         RollingMetrics {
             net_flow_60s_sol: net_flow_60s,
             net_flow_300s_sol: net_flow_300s,
@@ -710,6 +792,12 @@ impl TokenRollingState {
             unique_wallets_300s: self.unique_wallets_300s.len() as i32,
             bot_wallets_count_300s: bot_wallets.len() as i32,
             bot_trades_count_300s: bot_trades_count,
+            // Phase 6: DCA Rolling Windows
+            dca_buys_60s,
+            dca_buys_300s,
+            dca_buys_900s,
+            dca_buys_3600s,
+            dca_buys_14400s,
         }
     }
 }

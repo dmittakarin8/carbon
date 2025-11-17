@@ -265,7 +265,13 @@ export default function TokenDashboard({
                 <NetFlowCell value={token.netFlow14400s} />
               </td>
               <td className="p-2">
-                <DcaSparkline mint={token.mint} />
+                <DcaSparkline
+                  dcaBuys60s={token.dcaBuys60s}
+                  dcaBuys300s={token.dcaBuys300sWindow}
+                  dcaBuys900s={token.dcaBuys900s}
+                  dcaBuys3600s={token.dcaBuys3600s}
+                  dcaBuys14400s={token.dcaBuys14400s}
+                />
               </td>
               <td className="p-2 text-xs text-gray-400">
                 {token.dcaBuys300s > 0 ? (

@@ -91,6 +91,14 @@ pub struct AggregatedTokenState {
     pub avg_trade_size_300s_sol: Option<f64>,
     pub volume_300s_sol: Option<f64>,
 
+    // DCA buy counts (rolling windows)
+    // Phase 6: DCA Rolling Windows
+    pub dca_buys_60s: Option<i32>,
+    pub dca_buys_300s: Option<i32>,
+    pub dca_buys_900s: Option<i32>,
+    pub dca_buys_3600s: Option<i32>,
+    pub dca_buys_14400s: Option<i32>,
+
     // Timestamps
     pub updated_at: i64,
     pub created_at: i64,
@@ -173,6 +181,14 @@ impl AggregatedTokenState {
             avg_trade_size_300s_sol,
             volume_300s_sol: Some(volume_300s_sol),
 
+            // DCA buy counts (rolling windows)
+            // Phase 6: DCA Rolling Windows
+            dca_buys_60s: Some(metrics.dca_buys_60s),
+            dca_buys_300s: Some(metrics.dca_buys_300s),
+            dca_buys_900s: Some(metrics.dca_buys_900s),
+            dca_buys_3600s: Some(metrics.dca_buys_3600s),
+            dca_buys_14400s: Some(metrics.dca_buys_14400s),
+
             // Timestamps
             updated_at: now,
             created_at,
@@ -236,6 +252,12 @@ mod tests {
             unique_wallets_300s: 12,
             bot_wallets_count_300s: 2,
             bot_trades_count_300s: 6,
+            // Phase 6: DCA Rolling Windows
+            dca_buys_60s: 1,
+            dca_buys_300s: 3,
+            dca_buys_900s: 8,
+            dca_buys_3600s: 15,
+            dca_buys_14400s: 30,
         }
     }
 
@@ -406,6 +428,11 @@ mod tests {
             unique_wallets_300s: 0,
             bot_wallets_count_300s: 0,
             bot_trades_count_300s: 0,
+            dca_buys_60s: 0,
+            dca_buys_300s: 0,
+            dca_buys_900s: 0,
+            dca_buys_3600s: 0,
+            dca_buys_14400s: 0,
         };
 
         let mint = "zero_trades_mint";
@@ -437,6 +464,11 @@ mod tests {
             unique_wallets_300s: 8,
             bot_wallets_count_300s: 1,
             bot_trades_count_300s: 3,
+            dca_buys_60s: 0,
+            dca_buys_300s: 1,
+            dca_buys_900s: 2,
+            dca_buys_3600s: 5,
+            dca_buys_14400s: 10,
         };
 
         let mint = "negative_flow_mint";

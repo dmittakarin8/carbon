@@ -38,6 +38,7 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
     ),
   `;
   
+  // Phase 6: DCA Rolling Windows - query new dca_buys_* columns from token_aggregates
   const query = `
     WITH ${rawDcaCte}
     dca AS (
@@ -60,6 +61,11 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
       ta.net_flow_14400s_sol,
       ta.unique_wallets_300s,
       ta.volume_300s_sol,
+      ta.dca_buys_60s,
+      ta.dca_buys_300s,
+      ta.dca_buys_900s,
+      ta.dca_buys_3600s,
+      ta.dca_buys_14400s,
       dca.dca_count,
       dca.last_dca_ts,
       raw_dca.raw_dca_buys_1h
@@ -81,6 +87,11 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
     net_flow_14400s_sol: number | null;
     unique_wallets_300s: number | null;
     volume_300s_sol: number | null;
+    dca_buys_60s: number | null;
+    dca_buys_300s: number | null;
+    dca_buys_900s: number | null;
+    dca_buys_3600s: number | null;
+    dca_buys_14400s: number | null;
     dca_count: number | null;
     last_dca_ts: number | null;
     raw_dca_buys_1h: number | null;
@@ -96,6 +107,13 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
     netFlow14400s: row.net_flow_14400s_sol ?? 0,
     totalBuys300s: 0,
     totalSells300s: 0,
+    // Phase 6: Populate new DCA window fields from token_aggregates columns
+    dcaBuys60s: row.dca_buys_60s ?? 0,
+    dcaBuys300sWindow: row.dca_buys_300s ?? 0,
+    dcaBuys900s: row.dca_buys_900s ?? 0,
+    dcaBuys3600s: row.dca_buys_3600s ?? 0,
+    dcaBuys14400s: row.dca_buys_14400s ?? 0,
+    // Deprecated fields (kept for backward compatibility)
     dcaBuys300s: row.dca_count ?? 0,
     rawDcaBuys1h: row.raw_dca_buys_1h ?? 0,
     maxUniqueWallets: row.unique_wallets_300s ?? 0,
