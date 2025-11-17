@@ -1,84 +1,106 @@
 import { getDb, getWriteDb } from './db';
-import { TokenMetrics, SparklineDataPoint } from './types';
+import { TokenMetrics, SparklineDataPoint, DcaSparklineDataPoint } from './types';
+
+function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
+  try {
+    const result = db.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name=?
+    `).get(tableName);
+    return result !== undefined;
+  } catch {
+    return false;
+  }
+}
 
 export function getTokens(limit: number = 100): TokenMetrics[] {
   const db = getDb();
   
+  // Check if trades table exists (it may not be present in all database setups)
+  const hasTradesTable = tableExists(db, 'trades');
+  
   // Use CTE pattern matching the working Grafana query
   // DCA data comes from token_signals with signal_type = 'DCA_CONVICTION'
   // Time-windowed to last 1 hour (3600 seconds) to match 1h net flow window
+  const rawDcaCte = hasTradesTable ? `
+    raw_dca AS (
+      SELECT mint, COUNT(*) AS raw_dca_buys_1h
+      FROM trades
+      WHERE program_name = 'JupiterDCA'
+        AND action = 'BUY'
+        AND timestamp > unixepoch() - 3600
+      GROUP BY mint
+    ),
+  ` : `
+    raw_dca AS (
+      SELECT NULL AS mint, 0 AS raw_dca_buys_1h
+      WHERE 1=0
+    ),
+  `;
+  
   const query = `
-    WITH dca AS (
+    WITH ${rawDcaCte}
+    dca AS (
       SELECT 
         mint,
         COUNT(*) AS dca_count,
-        MAX(created_at) AS last_dca_ts,
-        SUM(CAST(json_extract(details_json, '$.net_flow_sol') AS REAL)) AS dca_net_flow
+        MAX(created_at) AS last_dca_ts
       FROM token_signals
       WHERE signal_type = 'DCA_CONVICTION'
         AND created_at > unixepoch() - 3600
       GROUP BY mint
     )
-    SELECT 
+    SELECT
       ta.mint,
-      SUM(ta.net_flow_60s_sol) as net_flow_60s,
-      SUM(ta.net_flow_300s_sol) as net_flow_300s,
-      SUM(ta.net_flow_900s_sol) as net_flow_900s,
-      SUM(ta.net_flow_3600s_sol) as net_flow_3600s,
-      SUM(ta.net_flow_7200s_sol) as net_flow_7200s,
-      SUM(ta.net_flow_14400s_sol) as net_flow_14400s,
-      SUM(ta.buy_count_300s) as total_buys_300s,
-      SUM(ta.sell_count_300s) as total_sells_300s,
-      COALESCE(dca.dca_count, 0) as dca_buys_300s,
-      COALESCE(dca.dca_net_flow, 0) as dca_net_flow_300s,
-      MAX(ta.unique_wallets_300s) as max_unique_wallets,
-      SUM(ta.volume_300s_sol) as total_volume_300s,
-      MAX(ta.updated_at) as last_update
-    FROM token_aggregates ta
-    LEFT JOIN dca ON ta.mint = dca.mint
-    WHERE ta.updated_at > unixepoch() - 60
-      AND ta.mint NOT IN (
-        SELECT mint FROM mint_blocklist 
-        WHERE expires_at IS NULL OR expires_at > unixepoch()
-      )
-    GROUP BY ta.mint
-    ORDER BY SUM(ta.net_flow_300s_sol) DESC
-    LIMIT ?
+      ta.net_flow_60s_sol,
+      ta.net_flow_300s_sol,
+      ta.net_flow_900s_sol,
+      ta.net_flow_3600s_sol,
+      ta.net_flow_7200s_sol,
+      ta.net_flow_14400s_sol,
+      ta.unique_wallets_300s,
+      ta.volume_300s_sol,
+      dca.dca_count,
+      dca.last_dca_ts,
+      raw_dca.raw_dca_buys_1h
+    FROM dca
+    JOIN token_aggregates ta ON ta.mint = dca.mint
+    LEFT JOIN raw_dca ON raw_dca.mint = ta.mint
+    ORDER BY ta.net_flow_300s_sol DESC
+    LIMIT 40
   `;
   
   const stmt = db.prepare(query);
-  const rows = stmt.all(limit) as Array<{
+  const rows = stmt.all() as Array<{
     mint: string;
-    net_flow_60s: number | null;
-    net_flow_300s: number | null;
-    net_flow_900s: number | null;
-    net_flow_3600s: number | null;
-    net_flow_7200s: number | null;
-    net_flow_14400s: number | null;
-    total_buys_300s: number | null;
-    total_sells_300s: number | null;
-    dca_buys_300s: number | null;
-    dca_net_flow_300s: number | null;
-    max_unique_wallets: number | null;
-    total_volume_300s: number | null;
-    last_update: number | null;
+    net_flow_60s_sol: number | null;
+    net_flow_300s_sol: number | null;
+    net_flow_900s_sol: number | null;
+    net_flow_3600s_sol: number | null;
+    net_flow_7200s_sol: number | null;
+    net_flow_14400s_sol: number | null;
+    unique_wallets_300s: number | null;
+    volume_300s_sol: number | null;
+    dca_count: number | null;
+    last_dca_ts: number | null;
+    raw_dca_buys_1h: number | null;
   }>;
   
   return rows.map(row => ({
     mint: row.mint,
-    netFlow60s: row.net_flow_60s ?? 0,
-    netFlow300s: row.net_flow_300s ?? 0,
-    netFlow900s: row.net_flow_900s ?? 0,
-    netFlow3600s: row.net_flow_3600s ?? 0,
-    netFlow7200s: row.net_flow_7200s ?? 0,
-    netFlow14400s: row.net_flow_14400s ?? 0,
-    totalBuys300s: row.total_buys_300s ?? 0,
-    totalSells300s: row.total_sells_300s ?? 0,
-    dcaBuys300s: row.dca_buys_300s ?? 0,
-    dcaNetFlow300s: row.dca_net_flow_300s ?? 0,
-    maxUniqueWallets: row.max_unique_wallets ?? 0,
-    totalVolume300s: row.total_volume_300s ?? 0,
-    lastUpdate: row.last_update ?? 0,
+    netFlow60s: row.net_flow_60s_sol ?? 0,
+    netFlow300s: row.net_flow_300s_sol ?? 0,
+    netFlow900s: row.net_flow_900s_sol ?? 0,
+    netFlow3600s: row.net_flow_3600s_sol ?? 0,
+    netFlow7200s: row.net_flow_7200s_sol ?? 0,
+    netFlow14400s: row.net_flow_14400s_sol ?? 0,
+    totalBuys300s: 0,
+    totalSells300s: 0,
+    dcaBuys300s: row.dca_count ?? 0,
+    rawDcaBuys1h: row.raw_dca_buys_1h ?? 0,
+    maxUniqueWallets: row.unique_wallets_300s ?? 0,
+    totalVolume300s: row.volume_300s_sol ?? 0,
+    lastUpdate: row.last_dca_ts ?? 0,
   }));
 }
 
@@ -149,6 +171,40 @@ export function unblockToken(mint: string): void {
   } finally {
     writeDb.close();
   }
+}
+
+export function getDcaSparklineData(mint: string): DcaSparklineDataPoint[] {
+  const db = getDb();
+  
+  // Check if trades table exists (it may not be present in all database setups)
+  if (!tableExists(db, 'trades')) {
+    return [];
+  }
+  
+  // Get DCA BUY trades grouped by minute for last 60 minutes
+  const query = `
+    SELECT 
+      (timestamp / 60) * 60 AS minute_timestamp,
+      COUNT(*) AS buy_count
+    FROM trades
+    WHERE mint = ?
+      AND program_name = 'JupiterDCA'
+      AND action = 'BUY'
+      AND timestamp > unixepoch() - 3600
+    GROUP BY minute_timestamp
+    ORDER BY minute_timestamp ASC
+  `;
+  
+  const stmt = db.prepare(query);
+  const rows = stmt.all(mint) as Array<{
+    minute_timestamp: number;
+    buy_count: number;
+  }>;
+  
+  return rows.map(row => ({
+    timestamp: row.minute_timestamp,
+    buyCount: row.buy_count,
+  }));
 }
 
 export function getLatestSignal(mint: string): { signalType: string; createdAt: number } | null {

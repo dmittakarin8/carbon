@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { TokenMetrics, TokenSignal } from '@/lib/types';
-import NetFlowSparkline from './NetFlowSparkline';
+import DcaSparkline from './DcaSparkline';
 import BlockButton from './BlockButton';
 
 type SortField =
@@ -14,8 +14,7 @@ type SortField =
   | 'netFlow14400s'
   | 'totalVolume300s'
   | 'maxUniqueWallets'
-  | 'dcaBuys300s'
-  | 'dcaNetFlow300s';
+  | 'dcaBuys300s';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -188,16 +187,20 @@ export default function TokenDashboard({
                 Net Flow 4h <SortIcon field="netFlow14400s" />
               </div>
             </th>
+            <th 
+              className="text-left p-2 text-xs font-semibold text-gray-400"
+              title="Raw DCA buy activity over the last hour (JupiterDCA BUY trades grouped per minute)."
+            >
+              DCA Buys
+            </th>
             <th
               className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('dcaBuys300s')}
+              title="DCA conviction signals occur when DCA buys overlap with spot buys, indicating coordinated accumulation."
             >
               <div className="flex items-center gap-1">
-                DCA Activity (1h) <SortIcon field="dcaBuys300s" />
+                DCA (1h) <SortIcon field="dcaBuys300s" />
               </div>
-            </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
-              Sparkline
             </th>
             <th className="text-left p-2 text-xs font-semibold text-gray-400">
               Signal
@@ -261,17 +264,17 @@ export default function TokenDashboard({
               <td className="p-2 text-xs">
                 <NetFlowCell value={token.netFlow14400s} />
               </td>
+              <td className="p-2">
+                <DcaSparkline mint={token.mint} />
+              </td>
               <td className="p-2 text-xs text-gray-400">
-                {token.dcaBuys300s > 0 || Math.abs(token.dcaNetFlow300s) > 0.0001 ? (
+                {token.dcaBuys300s > 0 ? (
                   <div>
-                    {token.dcaBuys300s} buys, {formatNetFlow(token.dcaNetFlow300s)} SOL
+                    {token.dcaBuys300s} buys
                   </div>
                 ) : (
                   <span className="text-gray-600">—</span>
                 )}
-              </td>
-              <td className="p-2">
-                <NetFlowSparkline mint={token.mint} />
               </td>
               <td className="p-2 text-xs">
                 {signals[token.mint] ? (

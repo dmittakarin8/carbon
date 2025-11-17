@@ -8,8 +8,8 @@ export interface TokenMetrics {
   netFlow14400s: number;   // 4-hour net flow
   totalBuys300s: number;
   totalSells300s: number;
-  dcaBuys300s: number;     // DCA buy count (JupiterDCA only)
-  dcaNetFlow300s: number;  // DCA net flow (JupiterDCA only)
+  dcaBuys300s: number;     // DCA conviction signals (1h)
+  rawDcaBuys1h: number;    // Raw DCA buy count from trades (1h)
   maxUniqueWallets: number;
   totalVolume300s: number;
   lastUpdate: number;
@@ -36,5 +36,14 @@ export interface BlockResponse {
 export interface TokenSignal {
   signalType: string;
   createdAt: number;
+}
+
+export interface DcaSparklineDataPoint {
+  timestamp: number;
+  buyCount: number;
+}
+
+export interface DcaSparklineResponse {
+  dataPoints: DcaSparklineDataPoint[];
 }
 
