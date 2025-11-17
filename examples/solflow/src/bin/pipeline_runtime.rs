@@ -161,12 +161,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         start_pipeline_ingestion(rx, engine_ingestion, db_writer_ingestion, flush_interval).await;
     });
-    info!("   └─ ✅ Ingestion task spawned (includes unified flush loop)");
+    info!("   ├─ ✅ Ingestion task spawned (includes unified flush loop)");
+
+    // Task 2: Pruning (removes inactive mints every 60 seconds)
+    let engine_prune = engine.clone();
+    let prune_threshold = env::var("MINT_PRUNE_THRESHOLD_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7200); // Default: 2 hours
+    
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            
+            let now = chrono::Utc::now().timestamp();
+            let mut engine_guard = engine_prune.lock().unwrap();
+            engine_guard.prune_inactive_mints(now, prune_threshold);
+        }
+    });
+    info!("   └─ ✅ Pruning task spawned (threshold: {}s)", prune_threshold);
 
     info!("✅ All background tasks running");
     info!("");
     info!("📊 Pipeline Status:");
     info!("   ├─ Ingestion: READY (unified flush every {}ms)", config.flush_interval_ms);
+    info!("   ├─ Pruning: READY (threshold: {}s)", prune_threshold);
     info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
     info!("");
     info!("🔄 Press CTRL+C to shutdown gracefully");

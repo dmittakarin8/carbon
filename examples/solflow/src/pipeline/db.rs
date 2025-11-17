@@ -166,11 +166,14 @@ impl SqliteAggregateWriter {
 impl AggregateDbWriter for SqliteAggregateWriter {
     /// Write aggregate metrics to token_aggregates table
     ///
+    /// Phase 5: Batched writes to reduce lock duration
+    ///
     /// Performs UPSERT for each aggregate:
     /// - If mint exists: updates all fields (preserves created_at, updates updated_at)
     /// - If mint doesn't exist: inserts new row
     ///
-    /// All aggregates are written in a single transaction for optimal performance.
+    /// Writes are batched (default: 500 mints per transaction) to avoid long-running
+    /// monolithic transactions that block for multiple seconds.
     async fn write_aggregates(
         &self,
         aggregates: Vec<AggregatedTokenState>,
@@ -180,83 +183,117 @@ impl AggregateDbWriter for SqliteAggregateWriter {
             return Ok(());
         }
 
+        // Phase 5: Load batch size from environment
+        let batch_size = std::env::var("FLUSH_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(500);
+
+        let total_count = aggregates.len();
+        let batch_count = (total_count + batch_size - 1) / batch_size;
+
+        log::debug!(
+            "📝 Writing {} aggregates in {} batches (size: {})",
+            total_count,
+            batch_count,
+            batch_size
+        );
+
         let mut conn = self.conn.lock().unwrap();
 
-        // Use single transaction for all aggregates
-        let tx = conn.transaction()?;
+        // Phase 5: Process in batches
+        for (batch_idx, chunk) in aggregates.chunks(batch_size).enumerate() {
+            let batch_start = std::time::Instant::now();
 
-        for agg in aggregates {
-            tx.execute(
-                r#"
-                INSERT INTO token_aggregates (
-                    mint, source_program, last_trade_timestamp,
-                    net_flow_60s_sol, net_flow_300s_sol, net_flow_900s_sol,
-                    net_flow_3600s_sol, net_flow_7200s_sol, net_flow_14400s_sol,
-                    buy_count_60s, sell_count_60s,
-                    buy_count_300s, sell_count_300s,
-                    buy_count_900s, sell_count_900s,
-                    unique_wallets_300s, bot_trades_300s, bot_wallets_300s,
-                    avg_trade_size_300s_sol, volume_300s_sol,
-                    price_usd, price_sol, market_cap_usd,
-                    updated_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(mint) DO UPDATE SET
-                    source_program = excluded.source_program,
-                    last_trade_timestamp = excluded.last_trade_timestamp,
-                    net_flow_60s_sol = excluded.net_flow_60s_sol,
-                    net_flow_300s_sol = excluded.net_flow_300s_sol,
-                    net_flow_900s_sol = excluded.net_flow_900s_sol,
-                    net_flow_3600s_sol = excluded.net_flow_3600s_sol,
-                    net_flow_7200s_sol = excluded.net_flow_7200s_sol,
-                    net_flow_14400s_sol = excluded.net_flow_14400s_sol,
-                    buy_count_60s = excluded.buy_count_60s,
-                    sell_count_60s = excluded.sell_count_60s,
-                    buy_count_300s = excluded.buy_count_300s,
-                    sell_count_300s = excluded.sell_count_300s,
-                    buy_count_900s = excluded.buy_count_900s,
-                    sell_count_900s = excluded.sell_count_900s,
-                    unique_wallets_300s = excluded.unique_wallets_300s,
-                    bot_trades_300s = excluded.bot_trades_300s,
-                    bot_wallets_300s = excluded.bot_wallets_300s,
-                    avg_trade_size_300s_sol = excluded.avg_trade_size_300s_sol,
-                    volume_300s_sol = excluded.volume_300s_sol,
-                    price_usd = excluded.price_usd,
-                    price_sol = excluded.price_sol,
-                    market_cap_usd = excluded.market_cap_usd,
-                    updated_at = excluded.updated_at
-                "#,
-                rusqlite::params![
-                    agg.mint,
-                    agg.source_program,
-                    agg.last_trade_timestamp,
-                    agg.net_flow_60s_sol,
-                    agg.net_flow_300s_sol,
-                    agg.net_flow_900s_sol,
-                    agg.net_flow_3600s_sol,
-                    agg.net_flow_7200s_sol,
-                    agg.net_flow_14400s_sol,
-                    agg.buy_count_60s,
-                    agg.sell_count_60s,
-                    agg.buy_count_300s,
-                    agg.sell_count_300s,
-                    agg.buy_count_900s,
-                    agg.sell_count_900s,
-                    agg.unique_wallets_300s,
-                    agg.bot_trades_300s,
-                    agg.bot_wallets_300s,
-                    agg.avg_trade_size_300s_sol,
-                    agg.volume_300s_sol,
-                    agg.price_usd,
-                    agg.price_sol,
-                    agg.market_cap_usd,
-                    agg.updated_at,
-                    agg.created_at,
-                ],
-            )?;
+            // Separate transaction per batch
+            let tx = conn.transaction()?;
+
+            for agg in chunk {
+                tx.execute(
+                    r#"
+                    INSERT INTO token_aggregates (
+                        mint, source_program, last_trade_timestamp,
+                        net_flow_60s_sol, net_flow_300s_sol, net_flow_900s_sol,
+                        net_flow_3600s_sol, net_flow_7200s_sol, net_flow_14400s_sol,
+                        buy_count_60s, sell_count_60s,
+                        buy_count_300s, sell_count_300s,
+                        buy_count_900s, sell_count_900s,
+                        unique_wallets_300s, bot_trades_300s, bot_wallets_300s,
+                        avg_trade_size_300s_sol, volume_300s_sol,
+                        price_usd, price_sol, market_cap_usd,
+                        updated_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(mint) DO UPDATE SET
+                        source_program = excluded.source_program,
+                        last_trade_timestamp = excluded.last_trade_timestamp,
+                        net_flow_60s_sol = excluded.net_flow_60s_sol,
+                        net_flow_300s_sol = excluded.net_flow_300s_sol,
+                        net_flow_900s_sol = excluded.net_flow_900s_sol,
+                        net_flow_3600s_sol = excluded.net_flow_3600s_sol,
+                        net_flow_7200s_sol = excluded.net_flow_7200s_sol,
+                        net_flow_14400s_sol = excluded.net_flow_14400s_sol,
+                        buy_count_60s = excluded.buy_count_60s,
+                        sell_count_60s = excluded.sell_count_60s,
+                        buy_count_300s = excluded.buy_count_300s,
+                        sell_count_300s = excluded.sell_count_300s,
+                        buy_count_900s = excluded.buy_count_900s,
+                        sell_count_900s = excluded.sell_count_900s,
+                        unique_wallets_300s = excluded.unique_wallets_300s,
+                        bot_trades_300s = excluded.bot_trades_300s,
+                        bot_wallets_300s = excluded.bot_wallets_300s,
+                        avg_trade_size_300s_sol = excluded.avg_trade_size_300s_sol,
+                        volume_300s_sol = excluded.volume_300s_sol,
+                        price_usd = excluded.price_usd,
+                        price_sol = excluded.price_sol,
+                        market_cap_usd = excluded.market_cap_usd,
+                        updated_at = excluded.updated_at
+                    "#,
+                    rusqlite::params![
+                        agg.mint,
+                        agg.source_program,
+                        agg.last_trade_timestamp,
+                        agg.net_flow_60s_sol,
+                        agg.net_flow_300s_sol,
+                        agg.net_flow_900s_sol,
+                        agg.net_flow_3600s_sol,
+                        agg.net_flow_7200s_sol,
+                        agg.net_flow_14400s_sol,
+                        agg.buy_count_60s,
+                        agg.sell_count_60s,
+                        agg.buy_count_300s,
+                        agg.sell_count_300s,
+                        agg.buy_count_900s,
+                        agg.sell_count_900s,
+                        agg.unique_wallets_300s,
+                        agg.bot_trades_300s,
+                        agg.bot_wallets_300s,
+                        agg.avg_trade_size_300s_sol,
+                        agg.volume_300s_sol,
+                        agg.price_usd,
+                        agg.price_sol,
+                        agg.market_cap_usd,
+                        agg.updated_at,
+                        agg.created_at,
+                    ],
+                )?;
+            }
+
+            tx.commit()?;
+
+            log::debug!(
+                "   ├─ Batch {}/{}: {} aggregates in {}ms",
+                batch_idx + 1,
+                batch_count,
+                chunk.len(),
+                batch_start.elapsed().as_millis()
+            );
         }
 
-        // Commit all writes at once
-        tx.commit()?;
+        log::debug!(
+            "   └─ ✅ All {} aggregates written in {} batches",
+            total_count,
+            batch_count
+        );
 
         Ok(())
     }

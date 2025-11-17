@@ -6,7 +6,9 @@
 use super::db::AggregateDbWriter;
 use super::engine::PipelineEngine;
 use super::types::TradeEvent;
+use std::env;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 
@@ -42,10 +44,34 @@ pub async fn start_pipeline_ingestion(
     log::info!("   ├─ Flush interval: {}ms", flush_interval_ms);
     log::info!("   └─ Waiting for trades...");
 
+    // Phase 5: Load back-pressure watermark thresholds
+    let channel_capacity = env::var("STREAMER_CHANNEL_BUFFER")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+
+    let high_watermark_pct = env::var("CHANNEL_HIGH_WATERMARK_PCT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(80);
+
+    let critical_watermark_pct = env::var("CHANNEL_CRITICAL_WATERMARK_PCT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(95);
+
+    let high_watermark = (channel_capacity * high_watermark_pct) / 100;
+    let critical_watermark = (channel_capacity * critical_watermark_pct) / 100;
+
+    log::info!("📊 Back-pressure monitoring:");
+    log::info!("   ├─ Capacity: {}", channel_capacity);
+    log::info!("   ├─ High watermark: {} ({}%)", high_watermark, high_watermark_pct);
+    log::info!("   └─ Critical watermark: {} ({}%)", critical_watermark, critical_watermark_pct);
+
     let mut flush_timer = interval(Duration::from_millis(flush_interval_ms));
     let mut trade_count = 0u64;
-    let mut last_log_time = std::time::Instant::now();
-    let channel_capacity = 10000; // Match STREAMER_CHANNEL_BUFFER default
+    let mut last_log_time = Instant::now();
+    let mut last_full_flush = Instant::now(); // Phase 5: Track full flush timing
 
     loop {
         tokio::select! {
@@ -71,22 +97,37 @@ pub async fn start_pipeline_ingestion(
             // Periodic flush timer - ONLY FLUSH MECHANISM
             _ = flush_timer.tick() => {
                 let now = chrono::Utc::now().timestamp();
-                let flush_start = std::time::Instant::now();
+                let flush_start = Instant::now();
                 
-                // 1. Lock engine ONCE and compute all metrics
-                let (aggregates, all_signals, active_mint_count) = {
+                // Phase 5: Determine flush type (delta vs full)
+                let is_full_flush = last_full_flush.elapsed().as_secs() >= 60;
+                let flush_type = if is_full_flush {
+                    last_full_flush = Instant::now();
+                    "FULL"
+                } else {
+                    "DELTA"
+                };
+                
+                // 1. Lock engine ONCE and compute metrics
+                let (aggregates, all_signals, _mint_count, flush_label) = {
                     let mut engine_guard = engine.lock().unwrap();
-                    let active_mints = engine_guard.get_active_mints();
                     
-                    if active_mints.is_empty() {
-                        // No active tokens, skip flush
-                        (Vec::new(), Vec::new(), 0)
+                    // Phase 5: Get mints to flush (delta or full)
+                    let mints_to_flush = if is_full_flush {
+                        engine_guard.get_active_mints() // Full flush: all mints
+                    } else {
+                        engine_guard.get_touched_mints() // Delta flush: only touched mints
+                    };
+                    
+                    if mints_to_flush.is_empty() {
+                        // No mints to process, skip flush
+                        (Vec::new(), Vec::new(), 0, format!("{} (0 mints)", flush_type))
                     } else {
                         let mut aggregates = Vec::new();
                         let mut all_signals = Vec::new();
                         
-                        // Compute metrics for all mints while holding lock
-                        for mint in &active_mints {
+                        // Compute metrics for selected mints while holding lock
+                        for mint in &mints_to_flush {
                             match engine_guard.compute_metrics(mint, now) {
                                 Ok((metrics, signals, aggregate)) => {
                                     aggregates.push(aggregate);
@@ -101,7 +142,11 @@ pub async fn start_pipeline_ingestion(
                             }
                         }
                         
-                        (aggregates, all_signals, active_mints.len())
+                        // Phase 5: Clear touched set after processing (for next delta flush)
+                        engine_guard.clear_touched_mints();
+                        
+                        let count = mints_to_flush.len();
+                        (aggregates, all_signals, count, format!("{} ({} mints)", flush_type, count))
                     }
                 }; // Lock released here
                 
@@ -134,22 +179,32 @@ pub async fn start_pipeline_ingestion(
                     log::info!("🚨 Detected {} signals", signals_written);
                 }
                 
-                // 3. Log channel health and flush performance
+                // 3. Log channel health and flush performance with back-pressure warnings
                 let channel_usage = rx.len();
                 let flush_duration = flush_start.elapsed();
+                let utilization_pct = (channel_usage * 100) / channel_capacity;
                 
-                log::info!("📊 Flush complete: {} mints, {} signals | channel: {}/{} | {}ms", 
-                    active_mint_count, 
+                log::info!("📊 Flush complete: {} | {} signals | channel: {}/{} ({}%) | {}ms", 
+                    flush_label,
                     signals_written,
                     channel_usage, 
                     channel_capacity,
+                    utilization_pct,
                     flush_duration.as_millis());
                 
-                // Warn if channel is filling up (> 50% capacity)
-                if channel_usage > channel_capacity / 2 {
-                    log::warn!("⚠️  Channel usage high: {}/{} ({}%)", 
-                        channel_usage, channel_capacity, 
-                        (channel_usage * 100) / channel_capacity);
+                // Phase 5: Back-pressure warnings at watermarks
+                if channel_usage >= critical_watermark {
+                    log::error!(
+                        "🔴 CRITICAL: Channel {}% full ({}/{}) - Data loss likely! \
+                         Consider increasing STREAMER_CHANNEL_BUFFER or reducing flush interval.",
+                        utilization_pct, channel_usage, channel_capacity
+                    );
+                } else if channel_usage >= high_watermark {
+                    log::warn!(
+                        "🟡 WARNING: Channel {}% full ({}/{}) - Approaching capacity. \
+                         Monitor for failed sends.",
+                        utilization_pct, channel_usage, channel_capacity
+                    );
                 }
             }
             

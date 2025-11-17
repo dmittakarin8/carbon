@@ -43,7 +43,7 @@ use super::db::AggregateDbWriter;
 use super::signals::{SignalType, TokenSignal};
 use super::state::{RollingMetrics, TokenRollingState};
 use super::types::{AggregatedTokenState, TokenMetadata, TradeEvent};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Pipeline engine orchestrating the aggregate-only architecture
@@ -53,6 +53,7 @@ use std::sync::Arc;
 ///
 /// Phase 3: Internal orchestration only (no database writes)
 /// Phase 4: Will add live integration and database persistence
+/// Phase 5: Delta-based flush optimization (touched_mints tracking)
 pub struct PipelineEngine {
     /// Per-token rolling state (60s/300s/900s windows)
     states: HashMap<String, TokenRollingState>,
@@ -77,6 +78,10 @@ pub struct PipelineEngine {
 
     /// Timestamp function (for testing with mock time)
     now_fn: Box<dyn Fn() -> i64 + Send + Sync>,
+
+    /// Phase 5: Delta flush optimization
+    /// Tracks mints that received trades since last flush (for incremental flush)
+    touched_mints: HashSet<String>,
 }
 
 impl PipelineEngine {
@@ -104,6 +109,7 @@ impl PipelineEngine {
             db_writer: None, // Phase 3: No database writes
             metadata_cache: HashMap::new(),
             now_fn,
+            touched_mints: HashSet::new(), // Phase 5: Delta flush optimization
         }
     }
 
@@ -113,15 +119,20 @@ impl PipelineEngine {
     /// 1. Gets or creates TokenRollingState for mint
     /// 2. Adds trade to rolling windows
     /// 3. Evicts old trades outside window ranges
+    /// 4. Marks mint as "touched" for delta flush optimization
     ///
     /// Phase 3: Only updates in-memory state
     /// Phase 4: May trigger background aggregation
+    /// Phase 5: Delta flush optimization (marks touched mints)
     ///
     /// # Arguments
     /// * `trade` - Trade event to process
     pub fn process_trade(&mut self, trade: TradeEvent) {
         let now = (self.now_fn)();
         let mint = trade.mint.clone();
+
+        // Phase 5: Mark mint as touched (for delta flush)
+        self.touched_mints.insert(mint.clone());
 
         // Get or create rolling state for this token
         let state = self
@@ -292,10 +303,89 @@ impl PipelineEngine {
     /// Get list of active mints with state
     ///
     /// Phase 4: Used by ingestion and schedulers to iterate over active tokens
+    /// Phase 5: Used for full flush fallback (every 60s)
     ///
     /// Returns: Vector of mint addresses (strings)
     pub fn get_active_mints(&self) -> Vec<String> {
         self.states.keys().cloned().collect()
+    }
+
+    /// Get list of mints that received trades since last flush (delta flush)
+    ///
+    /// Phase 5: Delta flush optimization
+    ///
+    /// Returns only mints that have been marked as "touched" since the last
+    /// `clear_touched_mints()` call. This enables O(M) flush complexity instead
+    /// of O(N) where M = touched mints per cycle (~50-200) and N = total mints (~8,797).
+    ///
+    /// Returns: Vector of touched mint addresses (strings)
+    pub fn get_touched_mints(&self) -> Vec<String> {
+        self.touched_mints.iter().cloned().collect()
+    }
+
+    /// Clear the touched mints set after flush
+    ///
+    /// Phase 5: Delta flush optimization
+    ///
+    /// Should be called after each flush cycle to reset the touched set.
+    /// This ensures the next delta flush only processes mints that receive
+    /// trades between flush cycles.
+    pub fn clear_touched_mints(&mut self) {
+        self.touched_mints.clear();
+    }
+
+    /// Prune mints with no activity in last N seconds
+    ///
+    /// Phase 5: Mint pruning to prevent unbounded state growth
+    ///
+    /// Removes mints from internal state if their `last_seen_ts` is older than
+    /// the specified threshold. This prevents the engine from accumulating
+    /// thousands of inactive mints (e.g., 8,797+ → ~100 active).
+    ///
+    /// Should be called periodically (e.g., every 60s) from background task.
+    ///
+    /// # Arguments
+    /// * `now`: Current Unix timestamp
+    /// * `threshold_secs`: Prune mints older than this (default: 7200 = 2 hours)
+    ///
+    /// # Safety
+    /// - Pruned mints automatically recreate state on next trade
+    /// - Threshold should be >= 2× longest window (14400s for 4h window)
+    /// - Pruning never happens during flush (engine lock prevents race)
+    pub fn prune_inactive_mints(&mut self, now: i64, threshold_secs: i64) {
+        let cutoff = now - threshold_secs;
+        let before_count = self.states.len();
+
+        // Remove mints with last_seen_ts < cutoff
+        self.states.retain(|mint, state| {
+            let keep = state.last_seen_ts >= cutoff;
+
+            if !keep {
+                log::debug!(
+                    "🗑️  Pruning inactive mint: {} (last seen: {}s ago)",
+                    mint,
+                    now - state.last_seen_ts
+                );
+
+                // Also remove from auxiliary structures
+                self.last_bot_counts.remove(mint);
+                self.last_signal_state.remove(mint);
+                self.touched_mints.remove(mint);
+            }
+
+            keep
+        });
+
+        let pruned = before_count - self.states.len();
+
+        if pruned > 0 {
+            log::info!(
+                "🗑️  Pruned {} inactive mints (total: {} → {})",
+                pruned,
+                before_count,
+                self.states.len()
+            );
+        }
     }
 
     // TODO: Phase 4 - Add database write methods

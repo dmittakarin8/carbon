@@ -22,6 +22,9 @@ pub struct TokenRollingState {
     /// Token mint address
     pub mint: String,
 
+    /// Phase 5: Last timestamp when this mint received a trade (for pruning)
+    pub last_seen_ts: i64,
+
     /// Rolling buffer: trades in last 60 seconds
     pub trades_60s: Vec<TradeEvent>,
 
@@ -508,9 +511,11 @@ impl TokenRollingState {
     /// Create a new rolling state container for a token
     ///
     /// Phase 2: Proper initialization with capacity hints
+    /// Phase 5: Initialize last_seen_ts to 0
     pub fn new(mint: String) -> Self {
         Self {
             mint,
+            last_seen_ts: 0, // Phase 5: Will be updated on first trade
             trades_60s: Vec::with_capacity(100),
             trades_300s: Vec::with_capacity(500),
             trades_900s: Vec::with_capacity(1500),
@@ -530,7 +535,11 @@ impl TokenRollingState {
     /// - Updates unique_wallets_300s with trade wallet
     /// - Updates bot_wallets_300s with placeholder logic
     /// - Adds trade to program-specific bucket for DCA correlation
+    /// Phase 5: Updates last_seen_ts for pruning
     pub fn add_trade(&mut self, trade: TradeEvent) {
+        // Phase 5: Update last seen timestamp for pruning
+        self.last_seen_ts = trade.timestamp;
+
         // Track wallet in 300s window
         self.unique_wallets_300s
             .insert(trade.user_account.clone());
