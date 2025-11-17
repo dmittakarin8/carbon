@@ -1,6 +1,9 @@
 # Carbon Terminal
 
 A real-time terminal UI for monitoring Solana DEX trades using Carbon framework.
+```bash
+ENABLE_PIPELINE=true MINT_PRUNE_THRESHOLD_SECS=7200 FLUSH_BATCH_SIZE=500 CHANNEL_HIGH_WATERMARK_PCT=80 CHANNEL_CRITICAL_WATERMARK_PCT=95 RUST_LOG=solflow::streamer_core::lib=debug,solflow::pipeline::ingestion=info cargo run --release --bin pipeline_runtime
+```
 
 ## Features
 
