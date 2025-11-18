@@ -6,15 +6,11 @@
 -- - User control flags (follow_price, blocked)
 --
 -- All new columns have default values for backward compatibility
+--
+-- IMPORTANT: This migration should only run ONCE. If columns already exist,
+-- manually delete this file from the sql/ directory or use a migration tracking system.
 
--- Add new columns to existing token_metadata table
-ALTER TABLE token_metadata ADD COLUMN image_url TEXT;
-ALTER TABLE token_metadata ADD COLUMN price_usd REAL;
-ALTER TABLE token_metadata ADD COLUMN market_cap REAL;
-ALTER TABLE token_metadata ADD COLUMN follow_price INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE token_metadata ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0;
-
--- Indexes for filtering and user controls
+-- Indexes for filtering and user controls (these are idempotent and safe to run multiple times)
 CREATE INDEX IF NOT EXISTS idx_token_metadata_blocked 
     ON token_metadata (blocked);
 
