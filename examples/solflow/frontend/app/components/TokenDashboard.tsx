@@ -38,7 +38,7 @@ function formatMint(mint: string): string {
   return `${mint.slice(0, 4)}...${mint.slice(-4)}`;
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, mint }: { text: string; mint: string }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
@@ -54,8 +54,8 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="ml-2 text-gray-500 hover:text-gray-300 transition-colors"
-      title={copied ? 'Copied!' : 'Copy address'}
+      className="text-gray-500 hover:text-gray-300 transition-colors"
+      title={copied ? 'Copied!' : `Copy address: ${mint}`}
     >
       {copied ? '✓' : '📋'}
     </button>
@@ -197,226 +197,290 @@ export default function TokenDashboard({
     }
   }
 
+  async function handleGetMetadata(mint: string) {
+    try {
+      const response = await fetch('/api/metadata/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mint }),
+      });
+      
+      if (response.ok) {
+        // Refetch metadata for this token
+        const metaResponse = await fetch(`/api/metadata/get?mint=${mint}`);
+        if (metaResponse.ok) {
+          const data = await metaResponse.json();
+          setMetadata(prev => ({
+            ...prev,
+            [mint]: data.metadata,
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to get metadata:', error);
+    }
+  }
+
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-gray-700">
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
-              Mint
+            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400">
+              Token
             </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
-              Name/Symbol
-            </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+            <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400">
               Price (USD)
             </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+            <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400">
               Market Cap
             </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
-              Follow Price
+            <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400">
+              Actions
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow60s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 1m <SortIcon field="netFlow60s" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow300s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 5m <SortIcon field="netFlow300s" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow900s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 15m <SortIcon field="netFlow900s" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow3600s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 1h <SortIcon field="netFlow3600s" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow7200s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 2h <SortIcon field="netFlow7200s" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow14400s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Net Flow 4h <SortIcon field="netFlow14400s" />
               </div>
             </th>
             <th 
-              className="text-left p-2 text-xs font-semibold text-gray-400"
+              className="text-center px-4 py-3 text-xs font-semibold text-gray-400"
               title="Raw DCA buy activity over the last hour (JupiterDCA BUY trades grouped per minute)."
             >
               DCA Buys
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('dcaBuys3600s')}
               title="DCA buy count in the last hour (3600s rolling window) from JupiterDCA program. Higher values indicate sustained accumulation activity."
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 DCA (1h) <SortIcon field="dcaBuys3600s" />
               </div>
             </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+            <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400">
               Signal
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('maxUniqueWallets')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Wallets <SortIcon field="maxUniqueWallets" />
               </div>
             </th>
             <th
-              className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('totalVolume300s')}
             >
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-end gap-1">
                 Volume <SortIcon field="totalVolume300s" />
               </div>
-            </th>
-            <th className="text-left p-2 text-xs font-semibold text-gray-400">
-              Block
             </th>
           </tr>
         </thead>
         <tbody>
-          {sortedTokens.map((token) => (
-            <tr
-              key={token.mint}
-              className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors"
-            >
-              <td className="p-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <a
-                    href={`https://solscan.io/token/${token.mint}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 font-mono"
-                    title={token.mint}
-                  >
-                    {formatMint(token.mint)}
-                  </a>
-                  <CopyButton text={token.mint} />
-                </div>
-              </td>
-              <td className="p-2 text-xs">
-                {metadata[token.mint] ? (
-                  <div>
-                    <div className="font-semibold text-gray-200">{metadata[token.mint].name}</div>
-                    <div className="text-gray-500">{metadata[token.mint].symbol}</div>
+          {sortedTokens.map((token) => {
+            const meta = metadata[token.mint];
+            const hasMetadata = meta && (meta.name || meta.symbol);
+            const isFollowing = meta?.followPrice ?? false;
+            
+            return (
+              <tr
+                key={token.mint}
+                className={`border-b border-gray-800 hover:bg-gray-800/50 transition-colors ${
+                  isFollowing ? 'bg-blue-900/10' : ''
+                }`}
+              >
+                {/* Token Column: Name + Symbol + Image + Copy Button */}
+                <td className="px-4 py-3 text-xs">
+                  <div className="flex items-center gap-3">
+                    {meta?.imageUrl && (
+                      <img 
+                        src={meta.imageUrl} 
+                        alt={meta.symbol || 'Token'}
+                        className="w-8 h-8 rounded-full opacity-70"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      {hasMetadata ? (
+                        <>
+                          <div className="font-semibold text-gray-200 truncate">
+                            {meta.name || 'Unknown'}
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            {meta.symbol || '—'}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-gray-600 font-mono text-xs">
+                          {formatMint(token.mint)}
+                        </div>
+                      )}
+                    </div>
+                    <CopyButton text={token.mint} mint={token.mint} />
                   </div>
-                ) : (
-                  <span className="text-gray-600">—</span>
-                )}
-              </td>
-              <td className="p-2 text-xs">
-                {metadata[token.mint]?.priceUsd ? (
-                  <span className="text-gray-300">${metadata[token.mint].priceUsd?.toFixed(6)}</span>
-                ) : (
-                  <span className="text-gray-600">—</span>
-                )}
-              </td>
-              <td className="p-2 text-xs">
-                {metadata[token.mint]?.marketCap ? (
-                  <span className="text-gray-300">${(metadata[token.mint].marketCap! / 1_000_000).toFixed(2)}M</span>
-                ) : (
-                  <span className="text-gray-600">—</span>
-                )}
-              </td>
-              <td className="p-2">
-                <input
-                  type="checkbox"
-                  checked={metadata[token.mint]?.followPrice ?? false}
-                  onChange={(e) => handleFollowPrice(token.mint, e.target.checked)}
-                  className="w-4 h-4 cursor-pointer accent-blue-500"
-                />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow60s} />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow300s} />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow900s} />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow3600s} />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow7200s} />
-              </td>
-              <td className="p-2 text-xs">
-                <NetFlowCell value={token.netFlow14400s} />
-              </td>
-              <td className="p-2">
-                <DcaSparkline
-                  dcaBuys60s={token.dcaBuys60s}
-                  dcaBuys300s={token.dcaBuys300sWindow}
-                  dcaBuys900s={token.dcaBuys900s}
-                  dcaBuys3600s={token.dcaBuys3600s}
-                  dcaBuys14400s={token.dcaBuys14400s}
-                />
-              </td>
-              <td className="p-2 text-xs text-gray-400">
-                {token.dcaBuys3600s > 0 ? (
-                  <div>
-                    {token.dcaBuys3600s} buys
+                </td>
+
+                {/* Price Column */}
+                <td className="px-4 py-3 text-xs text-right">
+                  {meta?.priceUsd ? (
+                    <span className="text-gray-300">${meta.priceUsd.toFixed(6)}</span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
+
+                {/* Market Cap Column */}
+                <td className="px-4 py-3 text-xs text-right">
+                  {meta?.marketCap ? (
+                    <span className="text-gray-300">
+                      ${(meta.marketCap / 1_000_000).toFixed(2)}M
+                    </span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
+
+                {/* Actions Column: Get/Refresh Metadata, Follow Price, Block */}
+                <td className="px-4 py-3">
+                  <div className="flex items-center justify-center gap-2">
+                    {/* Get/Refresh Metadata Button */}
+                    <button
+                      onClick={() => handleGetMetadata(token.mint)}
+                      className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                      title={hasMetadata ? 'Refresh metadata' : 'Get metadata'}
+                    >
+                      {hasMetadata ? '🔄' : '📥'}
+                    </button>
+
+                    {/* Follow Price Checkbox */}
+                    <label className="flex items-center gap-1 cursor-pointer" title="Follow price updates">
+                      <input
+                        type="checkbox"
+                        checked={isFollowing}
+                        onChange={(e) => handleFollowPrice(token.mint, e.target.checked)}
+                        className="w-4 h-4 cursor-pointer accent-blue-500"
+                      />
+                      <span className="text-gray-500 text-xs">Follow</span>
+                    </label>
+
+                    {/* Block Button */}
+                    <button
+                      onClick={() => handleBlockFixed(token.mint)}
+                      className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+                      title="Block this token"
+                    >
+                      🚫
+                    </button>
                   </div>
-                ) : (
-                  <span className="text-gray-600">—</span>
-                )}
-              </td>
-              <td className="p-2 text-xs">
-                {signals[token.mint] ? (
-                  <span className="px-2 py-1 bg-blue-600/20 text-blue-400 rounded text-xs">
-                    {signals[token.mint]?.signalType}
-                  </span>
-                ) : (
-                  <span className="text-gray-600">—</span>
-                )}
-              </td>
-              <td className="p-2 text-xs text-gray-400">
-                {token.maxUniqueWallets || '—'}
-              </td>
-              <td className="p-2 text-xs text-gray-400">
-                {formatNetFlow(token.totalVolume300s)} SOL
-              </td>
-              <td className="p-2">
-                <button
-                  onClick={() => handleBlockFixed(token.mint)}
-                  className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
-                >
-                  Block
-                </button>
-              </td>
-            </tr>
-          ))}
+                </td>
+                {/* Net Flow Columns */}
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow60s} />
+                </td>
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow300s} />
+                </td>
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow900s} />
+                </td>
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow3600s} />
+                </td>
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow7200s} />
+                </td>
+                <td className="px-4 py-3 text-xs text-right">
+                  <NetFlowCell value={token.netFlow14400s} />
+                </td>
+
+                {/* DCA Sparkline */}
+                <td className="px-4 py-3 text-center">
+                  <DcaSparkline
+                    dcaBuys60s={token.dcaBuys60s}
+                    dcaBuys300s={token.dcaBuys300sWindow}
+                    dcaBuys900s={token.dcaBuys900s}
+                    dcaBuys3600s={token.dcaBuys3600s}
+                    dcaBuys14400s={token.dcaBuys14400s}
+                  />
+                </td>
+
+                {/* DCA Buys Count */}
+                <td className="px-4 py-3 text-xs text-right text-gray-400">
+                  {token.dcaBuys3600s > 0 ? (
+                    <span>{token.dcaBuys3600s} buys</span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
+
+                {/* Signal */}
+                <td className="px-4 py-3 text-xs text-center">
+                  {signals[token.mint] ? (
+                    <span className="px-2 py-1 bg-blue-600/20 text-blue-400 rounded text-xs">
+                      {signals[token.mint]?.signalType}
+                    </span>
+                  ) : (
+                    <span className="text-gray-600">—</span>
+                  )}
+                </td>
+
+                {/* Wallets */}
+                <td className="px-4 py-3 text-xs text-right text-gray-400">
+                  {token.maxUniqueWallets || '—'}
+                </td>
+
+                {/* Volume */}
+                <td className="px-4 py-3 text-xs text-right text-gray-400">
+                  {formatNetFlow(token.totalVolume300s)} SOL
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {sortedTokens.length === 0 && (

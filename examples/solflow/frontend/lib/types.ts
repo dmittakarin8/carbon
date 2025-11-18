@@ -58,6 +58,7 @@ export interface TokenMetadata {
   imageUrl?: string;
   priceUsd?: number;
   marketCap?: number;
+  decimals?: number;
   followPrice: boolean;
   blocked: boolean;
   updatedAt: number;

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { TokenMetrics } from '@/lib/types';
 import TokenDashboard from './components/TokenDashboard';
+import BlockedTokensModal from './components/BlockedTokensModal';
 
 export default function Home() {
   const [tokens, setTokens] = useState<TokenMetrics[]>([]);
@@ -38,11 +39,14 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <div className="container mx-auto px-4 py-8">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold mb-2">SolFlow Token Dashboard</h1>
-          <p className="text-gray-400 text-sm">
-            Real-time token metrics with net flow across multiple time windows
-          </p>
+        <header className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold mb-2">SolFlow Token Dashboard</h1>
+            <p className="text-gray-400 text-sm">
+              Real-time token metrics with net flow across multiple time windows
+            </p>
+          </div>
+          <BlockedTokensModal />
         </header>
 
         {loading && tokens.length === 0 ? (

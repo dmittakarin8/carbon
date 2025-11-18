@@ -255,14 +255,18 @@ export function setFollowPrice(mint: string, follow: boolean): void {
   
   try {
     const now = Math.floor(Date.now() / 1000);
+    
+    // Insert or update - ensure row exists
     const query = `
-      UPDATE token_metadata 
-      SET follow_price = ?, updated_at = ?
-      WHERE mint = ?
+      INSERT INTO token_metadata (mint, follow_price, updated_at, created_at, decimals, blocked)
+      VALUES (?, ?, ?, ?, 0, 0)
+      ON CONFLICT(mint) DO UPDATE SET
+        follow_price = excluded.follow_price,
+        updated_at = excluded.updated_at
     `;
     
     const stmt = writeDb.prepare(query);
-    stmt.run(follow ? 1 : 0, now, mint);
+    stmt.run(mint, follow ? 1 : 0, now, now);
   } finally {
     writeDb.close();
   }
@@ -273,14 +277,18 @@ export function setBlocked(mint: string, blocked: boolean): void {
   
   try {
     const now = Math.floor(Date.now() / 1000);
+    
+    // Insert or update - ensure row exists
     const query = `
-      UPDATE token_metadata 
-      SET blocked = ?, updated_at = ?
-      WHERE mint = ?
+      INSERT INTO token_metadata (mint, blocked, updated_at, created_at, decimals, follow_price)
+      VALUES (?, ?, ?, ?, 0, 0)
+      ON CONFLICT(mint) DO UPDATE SET
+        blocked = excluded.blocked,
+        updated_at = excluded.updated_at
     `;
     
     const stmt = writeDb.prepare(query);
-    stmt.run(blocked ? 1 : 0, now, mint);
+    stmt.run(mint, blocked ? 1 : 0, now, now);
   } finally {
     writeDb.close();
   }
