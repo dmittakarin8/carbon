@@ -14,7 +14,7 @@ type SortField =
   | 'netFlow14400s'
   | 'totalVolume300s'
   | 'maxUniqueWallets'
-  | 'dcaBuys300s';
+  | 'dcaBuys3600s';
 
 type SortDirection = 'asc' | 'desc';
 
@@ -195,11 +195,11 @@ export default function TokenDashboard({
             </th>
             <th
               className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
-              onClick={() => handleSort('dcaBuys300s')}
-              title="DCA conviction signals occur when DCA buys overlap with spot buys, indicating coordinated accumulation."
+              onClick={() => handleSort('dcaBuys3600s')}
+              title="DCA buy count in the last hour (3600s rolling window) from JupiterDCA program. Higher values indicate sustained accumulation activity."
             >
               <div className="flex items-center gap-1">
-                DCA (1h) <SortIcon field="dcaBuys300s" />
+                DCA (1h) <SortIcon field="dcaBuys3600s" />
               </div>
             </th>
             <th className="text-left p-2 text-xs font-semibold text-gray-400">
@@ -274,9 +274,9 @@ export default function TokenDashboard({
                 />
               </td>
               <td className="p-2 text-xs text-gray-400">
-                {token.dcaBuys300s > 0 ? (
+                {token.dcaBuys3600s > 0 ? (
                   <div>
-                    {token.dcaBuys300s} buys
+                    {token.dcaBuys3600s} buys
                   </div>
                 ) : (
                   <span className="text-gray-600">—</span>

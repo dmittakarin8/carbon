@@ -16,41 +16,9 @@ function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
 export function getTokens(limit: number = 100): TokenMetrics[] {
   const db = getDb();
   
-  // Check if trades table exists (it may not be present in all database setups)
-  const hasTradesTable = tableExists(db, 'trades');
-  
-  // Use CTE pattern matching the working Grafana query
-  // DCA data comes from token_signals with signal_type = 'DCA_CONVICTION'
-  // Time-windowed to last 1 hour (3600 seconds) to match 1h net flow window
-  const rawDcaCte = hasTradesTable ? `
-    raw_dca AS (
-      SELECT mint, COUNT(*) AS raw_dca_buys_1h
-      FROM trades
-      WHERE program_name = 'JupiterDCA'
-        AND action = 'BUY'
-        AND timestamp > unixepoch() - 3600
-      GROUP BY mint
-    ),
-  ` : `
-    raw_dca AS (
-      SELECT NULL AS mint, 0 AS raw_dca_buys_1h
-      WHERE 1=0
-    ),
-  `;
-  
-  // Phase 6: DCA Rolling Windows - query new dca_buys_* columns from token_aggregates
+  // Phase 6: DCA Rolling Windows - query dca_buys_* columns directly from token_aggregates
+  // Removed deprecated CTE joins for raw_dca and dca_count from token_signals
   const query = `
-    WITH ${rawDcaCte}
-    dca AS (
-      SELECT 
-        mint,
-        COUNT(*) AS dca_count,
-        MAX(created_at) AS last_dca_ts
-      FROM token_signals
-      WHERE signal_type = 'DCA_CONVICTION'
-        AND created_at > unixepoch() - 3600
-      GROUP BY mint
-    )
     SELECT
       ta.mint,
       ta.net_flow_60s_sol,
@@ -66,12 +34,9 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
       ta.dca_buys_900s,
       ta.dca_buys_3600s,
       ta.dca_buys_14400s,
-      dca.dca_count,
-      dca.last_dca_ts,
-      raw_dca.raw_dca_buys_1h
-    FROM dca
-    JOIN token_aggregates ta ON ta.mint = dca.mint
-    LEFT JOIN raw_dca ON raw_dca.mint = ta.mint
+      ta.updated_at
+    FROM token_aggregates ta
+    WHERE ta.dca_buys_3600s > 0
     ORDER BY ta.net_flow_300s_sol DESC
     LIMIT 40
   `;
@@ -92,9 +57,7 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
     dca_buys_900s: number | null;
     dca_buys_3600s: number | null;
     dca_buys_14400s: number | null;
-    dca_count: number | null;
-    last_dca_ts: number | null;
-    raw_dca_buys_1h: number | null;
+    updated_at: number | null;
   }>;
   
   return rows.map(row => ({
@@ -107,18 +70,15 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
     netFlow14400s: row.net_flow_14400s_sol ?? 0,
     totalBuys300s: 0,
     totalSells300s: 0,
-    // Phase 6: Populate new DCA window fields from token_aggregates columns
+    // Phase 6: DCA rolling-window fields from token_aggregates
     dcaBuys60s: row.dca_buys_60s ?? 0,
     dcaBuys300sWindow: row.dca_buys_300s ?? 0,
     dcaBuys900s: row.dca_buys_900s ?? 0,
     dcaBuys3600s: row.dca_buys_3600s ?? 0,
     dcaBuys14400s: row.dca_buys_14400s ?? 0,
-    // Deprecated fields (kept for backward compatibility)
-    dcaBuys300s: row.dca_count ?? 0,
-    rawDcaBuys1h: row.raw_dca_buys_1h ?? 0,
     maxUniqueWallets: row.unique_wallets_300s ?? 0,
     totalVolume300s: row.volume_300s_sol ?? 0,
-    lastUpdate: row.last_dca_ts ?? 0,
+    lastUpdate: row.updated_at ?? 0,
   }));
 }
 
