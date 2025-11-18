@@ -4,15 +4,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { TokenMetrics, TokenSignal, TokenMetadata } from '@/lib/types';
 import DcaSparkline from './DcaSparkline';
 import BlockButton from './BlockButton';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { TrendingUp, Target, Zap, AlertTriangle, Minus, Star, RefreshCw, Download, Ban, Copy, Check } from 'lucide-react';
 
 type SortField =
-  | 'netFlow60s'
-  | 'netFlow300s'
   | 'netFlow900s'
   | 'netFlow3600s'
-  | 'netFlow7200s'
   | 'netFlow14400s'
-  | 'totalVolume300s'
   | 'maxUniqueWallets'
   | 'dcaBuys3600s';
 
@@ -52,13 +50,76 @@ function CopyButton({ text, mint }: { text: string; mint: string }) {
   }
 
   return (
-    <button
-      onClick={handleCopy}
-      className="text-gray-500 hover:text-gray-300 transition-colors"
-      title={copied ? 'Copied!' : `Copy address: ${mint}`}
-    >
-      {copied ? '✓' : '📋'}
-    </button>
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button
+            onClick={handleCopy}
+            className="text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            {copied ? (
+              <Check className="w-3.5 h-3.5 text-green-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+            sideOffset={5}
+          >
+            {copied ? 'Copied!' : 'Copy Address'}
+            <Tooltip.Arrow className="fill-gray-700" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
+
+function SignalIcon({ signalType }: { signalType: string | null }) {
+  if (!signalType) {
+    return <Minus className="w-3.5 h-3.5 text-gray-600" />;
+  }
+
+  let Icon = Minus;
+  let label = signalType;
+
+  switch (signalType.toUpperCase()) {
+    case 'BREAKOUT':
+      Icon = TrendingUp;
+      break;
+    case 'FOCUSED':
+      Icon = Target;
+      break;
+    case 'SURGE':
+      Icon = Zap;
+      break;
+    case 'BOT_DROPOFF':
+      Icon = AlertTriangle;
+      break;
+  }
+
+  return (
+    <Tooltip.Provider delayDuration={200}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button className="text-blue-400 hover:text-blue-300 transition-colors">
+            <Icon className="w-3.5 h-3.5" />
+          </button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+            sideOffset={5}
+          >
+            {label}
+            <Tooltip.Arrow className="fill-gray-700" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
   );
 }
 
@@ -66,7 +127,7 @@ export default function TokenDashboard({
   tokens,
   onRefresh,
 }: TokenDashboardProps) {
-  const [sortField, setSortField] = useState<SortField>('netFlow300s');
+  const [sortField, setSortField] = useState<SortField>('netFlow900s');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [signals, setSignals] = useState<Record<string, TokenSignal | null>>({});
   const [metadata, setMetadata] = useState<Record<string, TokenMetadata>>({});
@@ -226,36 +287,20 @@ export default function TokenDashboard({
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-gray-700">
-            <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400">
+            <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400">
               Token
             </th>
-            <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400">
+            <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400">
               Price (USD)
             </th>
-            <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400">
+            <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400">
               Market Cap
             </th>
-            <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400">
+            <th className="text-center px-3 py-3 text-xs font-semibold text-gray-400">
               Actions
             </th>
             <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
-              onClick={() => handleSort('netFlow60s')}
-            >
-              <div className="flex items-center justify-end gap-1">
-                Net Flow 1m <SortIcon field="netFlow60s" />
-              </div>
-            </th>
-            <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
-              onClick={() => handleSort('netFlow300s')}
-            >
-              <div className="flex items-center justify-end gap-1">
-                Net Flow 5m <SortIcon field="netFlow300s" />
-              </div>
-            </th>
-            <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-5 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow900s')}
             >
               <div className="flex items-center justify-end gap-1">
@@ -263,7 +308,7 @@ export default function TokenDashboard({
               </div>
             </th>
             <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-5 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow3600s')}
             >
               <div className="flex items-center justify-end gap-1">
@@ -271,15 +316,7 @@ export default function TokenDashboard({
               </div>
             </th>
             <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
-              onClick={() => handleSort('netFlow7200s')}
-            >
-              <div className="flex items-center justify-end gap-1">
-                Net Flow 2h <SortIcon field="netFlow7200s" />
-              </div>
-            </th>
-            <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-5 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('netFlow14400s')}
             >
               <div className="flex items-center justify-end gap-1">
@@ -287,13 +324,13 @@ export default function TokenDashboard({
               </div>
             </th>
             <th 
-              className="text-center px-4 py-3 text-xs font-semibold text-gray-400"
+              className="text-center px-5 py-3 text-xs font-semibold text-gray-400"
               title="Raw DCA buy activity over the last hour (JupiterDCA BUY trades grouped per minute)."
             >
               DCA Buys
             </th>
             <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-5 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('dcaBuys3600s')}
               title="DCA buy count in the last hour (3600s rolling window) from JupiterDCA program. Higher values indicate sustained accumulation activity."
             >
@@ -301,23 +338,15 @@ export default function TokenDashboard({
                 DCA (1h) <SortIcon field="dcaBuys3600s" />
               </div>
             </th>
-            <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400">
+            <th className="text-center px-2 py-3 text-xs font-semibold text-gray-400">
               Signal
             </th>
             <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
+              className="text-right px-2 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
               onClick={() => handleSort('maxUniqueWallets')}
             >
               <div className="flex items-center justify-end gap-1">
                 Wallets <SortIcon field="maxUniqueWallets" />
-              </div>
-            </th>
-            <th
-              className="text-right px-4 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
-              onClick={() => handleSort('totalVolume300s')}
-            >
-              <div className="flex items-center justify-end gap-1">
-                Volume <SortIcon field="totalVolume300s" />
               </div>
             </th>
           </tr>
@@ -332,11 +361,11 @@ export default function TokenDashboard({
               <tr
                 key={token.mint}
                 className={`border-b border-gray-800 hover:bg-gray-800/50 transition-colors ${
-                  isFollowing ? 'bg-blue-900/10' : ''
+                  isFollowing ? 'bg-blue-950/30 border-l-2 border-l-blue-500 hover:bg-blue-950/40 hover:ring-1 hover:ring-blue-500/20' : ''
                 }`}
               >
-                {/* Token Column: Name + Symbol + Image + Copy Button */}
-                <td className="px-4 py-3 text-xs">
+                {/* Token Column: Name + Symbol + Image */}
+                <td className="px-5 py-3 text-xs">
                   <div className="flex items-center gap-3">
                     {meta?.imageUrl && (
                       <img 
@@ -361,12 +390,11 @@ export default function TokenDashboard({
                         </div>
                       )}
                     </div>
-                    <CopyButton text={token.mint} mint={token.mint} />
                   </div>
                 </td>
 
                 {/* Price Column */}
-                <td className="px-4 py-3 text-xs text-right">
+                <td className="px-5 py-3 text-xs text-right">
                   {meta?.priceUsd ? (
                     <span className="text-gray-300">${meta.priceUsd.toFixed(6)}</span>
                   ) : (
@@ -375,7 +403,7 @@ export default function TokenDashboard({
                 </td>
 
                 {/* Market Cap Column */}
-                <td className="px-4 py-3 text-xs text-right">
+                <td className="px-5 py-3 text-xs text-right">
                   {meta?.marketCap ? (
                     <span className="text-gray-300">
                       ${(meta.marketCap / 1_000_000).toFixed(2)}M
@@ -385,61 +413,108 @@ export default function TokenDashboard({
                   )}
                 </td>
 
-                {/* Actions Column: Get/Refresh Metadata, Follow Price, Block */}
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-center gap-2">
-                    {/* Get/Refresh Metadata Button */}
-                    <button
-                      onClick={() => handleGetMetadata(token.mint)}
-                      className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                      title={hasMetadata ? 'Refresh metadata' : 'Get metadata'}
-                    >
-                      {hasMetadata ? '🔄' : '📥'}
-                    </button>
+                {/* Actions Column */}
+                <td className="px-3 py-3">
+                  <div className="flex items-center justify-center gap-1.5">
+                    {/* Copy Address */}
+                    <CopyButton text={token.mint} mint={token.mint} />
 
-                    {/* Follow Price Checkbox */}
-                    <label className="flex items-center gap-1 cursor-pointer" title="Follow price updates">
-                      <input
-                        type="checkbox"
-                        checked={isFollowing}
-                        onChange={(e) => handleFollowPrice(token.mint, e.target.checked)}
-                        className="w-4 h-4 cursor-pointer accent-blue-500"
-                      />
-                      <span className="text-gray-500 text-xs">Follow</span>
-                    </label>
+                    {/* Follow Price Star */}
+                    <Tooltip.Provider delayDuration={200}>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <button
+                            onClick={() => handleFollowPrice(token.mint, !isFollowing)}
+                            className={`transition-colors ${
+                              isFollowing 
+                                ? 'text-yellow-400 hover:text-yellow-300' 
+                                : 'text-gray-500 hover:text-gray-400'
+                            }`}
+                          >
+                            <Star 
+                              className="w-3.5 h-3.5" 
+                              fill={isFollowing ? 'currentColor' : 'none'}
+                              strokeWidth={2}
+                            />
+                          </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+                            sideOffset={5}
+                          >
+                            {isFollowing ? 'Following' : 'Follow'}
+                            <Tooltip.Arrow className="fill-gray-700" />
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
+                    </Tooltip.Provider>
 
-                    {/* Block Button */}
-                    <button
-                      onClick={() => handleBlockFixed(token.mint)}
-                      className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
-                      title="Block this token"
-                    >
-                      🚫
-                    </button>
+                    {/* Refresh Metadata */}
+                    <Tooltip.Provider delayDuration={200}>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <button
+                            onClick={() => handleGetMetadata(token.mint)}
+                            className="text-gray-500 hover:text-gray-300 transition-colors"
+                          >
+                            {hasMetadata ? (
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+                            sideOffset={5}
+                          >
+                            {hasMetadata ? 'Refresh' : 'Fetch'}
+                            <Tooltip.Arrow className="fill-gray-700" />
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
+                    </Tooltip.Provider>
+
+                    {/* Block Token */}
+                    <Tooltip.Provider delayDuration={200}>
+                      <Tooltip.Root>
+                        <Tooltip.Trigger asChild>
+                          <button
+                            onClick={() => handleBlockFixed(token.mint)}
+                            className="text-gray-500 hover:text-gray-400 transition-colors"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                          </button>
+                        </Tooltip.Trigger>
+                        <Tooltip.Portal>
+                          <Tooltip.Content
+                            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+                            sideOffset={5}
+                          >
+                            Block
+                            <Tooltip.Arrow className="fill-gray-700" />
+                          </Tooltip.Content>
+                        </Tooltip.Portal>
+                      </Tooltip.Root>
+                    </Tooltip.Provider>
                   </div>
                 </td>
+                
                 {/* Net Flow Columns */}
-                <td className="px-4 py-3 text-xs text-right">
-                  <NetFlowCell value={token.netFlow60s} />
-                </td>
-                <td className="px-4 py-3 text-xs text-right">
-                  <NetFlowCell value={token.netFlow300s} />
-                </td>
-                <td className="px-4 py-3 text-xs text-right">
+                <td className="px-5 py-3 text-xs text-right">
                   <NetFlowCell value={token.netFlow900s} />
                 </td>
-                <td className="px-4 py-3 text-xs text-right">
+                <td className="px-5 py-3 text-xs text-right">
                   <NetFlowCell value={token.netFlow3600s} />
                 </td>
-                <td className="px-4 py-3 text-xs text-right">
-                  <NetFlowCell value={token.netFlow7200s} />
-                </td>
-                <td className="px-4 py-3 text-xs text-right">
+                <td className="px-5 py-3 text-xs text-right">
                   <NetFlowCell value={token.netFlow14400s} />
                 </td>
 
                 {/* DCA Sparkline */}
-                <td className="px-4 py-3 text-center">
+                <td className="px-5 py-3 text-center">
                   <DcaSparkline
                     dcaBuys60s={token.dcaBuys60s}
                     dcaBuys300s={token.dcaBuys300sWindow}
@@ -450,7 +525,7 @@ export default function TokenDashboard({
                 </td>
 
                 {/* DCA Buys Count */}
-                <td className="px-4 py-3 text-xs text-right text-gray-400">
+                <td className="px-5 py-3 text-xs text-right text-gray-400">
                   {token.dcaBuys3600s > 0 ? (
                     <span>{token.dcaBuys3600s} buys</span>
                   ) : (
@@ -459,24 +534,13 @@ export default function TokenDashboard({
                 </td>
 
                 {/* Signal */}
-                <td className="px-4 py-3 text-xs text-center">
-                  {signals[token.mint] ? (
-                    <span className="px-2 py-1 bg-blue-600/20 text-blue-400 rounded text-xs">
-                      {signals[token.mint]?.signalType}
-                    </span>
-                  ) : (
-                    <span className="text-gray-600">—</span>
-                  )}
+                <td className="px-2 py-3 text-center">
+                  <SignalIcon signalType={signals[token.mint]?.signalType || null} />
                 </td>
 
                 {/* Wallets */}
-                <td className="px-4 py-3 text-xs text-right text-gray-400">
+                <td className="px-2 py-3 text-xs text-right text-gray-400">
                   {token.maxUniqueWallets || '—'}
-                </td>
-
-                {/* Volume */}
-                <td className="px-4 py-3 text-xs text-right text-gray-400">
-                  {formatNetFlow(token.totalVolume300s)} SOL
                 </td>
               </tr>
             );
