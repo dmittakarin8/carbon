@@ -36,6 +36,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     env_logger::init();
 
+    // Initialize rustls crypto provider (required for reqwest with rustls-tls)
+    // This must be done before any HTTPS requests are made
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .ok(); // Ignore error if already installed
+
     info!("🚀 Pipeline Runtime - Phase 4 Activation Layer");
     info!("   ├─ Version: 0.1.0");
     info!("   └─ Mode: Parallel (legacy aggregator unaffected)");
