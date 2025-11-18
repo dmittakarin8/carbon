@@ -30,7 +30,7 @@ solana-transaction-status = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 yellowstone-grpc-proto = { workspace = true }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 
 [[bin]]
 name = "grpc_verify"
