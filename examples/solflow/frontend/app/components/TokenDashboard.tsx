@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { TokenMetrics, TokenSignal } from '@/lib/types';
+import { TokenMetrics, TokenSignal, TokenMetadata } from '@/lib/types';
 import DcaSparkline from './DcaSparkline';
 import BlockButton from './BlockButton';
 
@@ -69,6 +69,7 @@ export default function TokenDashboard({
   const [sortField, setSortField] = useState<SortField>('netFlow300s');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [signals, setSignals] = useState<Record<string, TokenSignal | null>>({});
+  const [metadata, setMetadata] = useState<Record<string, TokenMetadata>>({});
 
   useEffect(() => {
     // Fetch signals for all tokens
@@ -96,6 +97,35 @@ export default function TokenDashboard({
 
     if (tokens.length > 0) {
       fetchSignals();
+    }
+  }, [tokens]);
+
+  useEffect(() => {
+    // Fetch metadata for all tokens
+    async function fetchMetadata() {
+      const metadataPromises = tokens.map(async (token) => {
+        try {
+          const response = await fetch(`/api/metadata/get?mint=${token.mint}`);
+          if (response.ok) {
+            const data = await response.json();
+            return { mint: token.mint, metadata: data.metadata };
+          }
+        } catch (error) {
+          console.error(`Error fetching metadata for ${token.mint}:`, error);
+        }
+        return { mint: token.mint, metadata: null };
+      });
+
+      const results = await Promise.all(metadataPromises);
+      const metadataMap: Record<string, TokenMetadata> = {};
+      results.forEach(({ mint, metadata }) => {
+        if (metadata) metadataMap[mint] = metadata;
+      });
+      setMetadata(metadataMap);
+    }
+
+    if (tokens.length > 0) {
+      fetchMetadata();
     }
   }, [tokens]);
 
@@ -131,6 +161,42 @@ export default function TokenDashboard({
     return <span className={colorClass}>{formatNetFlow(value)}</span>;
   }
 
+  async function handleFollowPrice(mint: string, value: boolean) {
+    try {
+      const response = await fetch('/api/metadata/follow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mint, value }),
+      });
+      
+      if (response.ok) {
+        // Update local state
+        setMetadata(prev => ({
+          ...prev,
+          [mint]: { ...prev[mint], followPrice: value, mint, blocked: false, updatedAt: Date.now() / 1000 },
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to toggle follow price:', error);
+    }
+  }
+
+  async function handleBlockFixed(mint: string) {
+    try {
+      const response = await fetch('/api/metadata/block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mint }),
+      });
+      
+      if (response.ok) {
+        onRefresh(); // Remove from main table immediately
+      }
+    } catch (error) {
+      console.error('Failed to block:', error);
+    }
+  }
+
   return (
     <div className="w-full overflow-x-auto">
       <table className="w-full border-collapse">
@@ -138,6 +204,18 @@ export default function TokenDashboard({
           <tr className="border-b border-gray-700">
             <th className="text-left p-2 text-xs font-semibold text-gray-400">
               Mint
+            </th>
+            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+              Name/Symbol
+            </th>
+            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+              Price (USD)
+            </th>
+            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+              Market Cap
+            </th>
+            <th className="text-left p-2 text-xs font-semibold text-gray-400">
+              Follow Price
             </th>
             <th
               className="text-left p-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
@@ -247,6 +325,38 @@ export default function TokenDashboard({
                 </div>
               </td>
               <td className="p-2 text-xs">
+                {metadata[token.mint] ? (
+                  <div>
+                    <div className="font-semibold text-gray-200">{metadata[token.mint].name}</div>
+                    <div className="text-gray-500">{metadata[token.mint].symbol}</div>
+                  </div>
+                ) : (
+                  <span className="text-gray-600">—</span>
+                )}
+              </td>
+              <td className="p-2 text-xs">
+                {metadata[token.mint]?.priceUsd ? (
+                  <span className="text-gray-300">${metadata[token.mint].priceUsd?.toFixed(6)}</span>
+                ) : (
+                  <span className="text-gray-600">—</span>
+                )}
+              </td>
+              <td className="p-2 text-xs">
+                {metadata[token.mint]?.marketCap ? (
+                  <span className="text-gray-300">${(metadata[token.mint].marketCap! / 1_000_000).toFixed(2)}M</span>
+                ) : (
+                  <span className="text-gray-600">—</span>
+                )}
+              </td>
+              <td className="p-2">
+                <input
+                  type="checkbox"
+                  checked={metadata[token.mint]?.followPrice ?? false}
+                  onChange={(e) => handleFollowPrice(token.mint, e.target.checked)}
+                  className="w-4 h-4 cursor-pointer accent-blue-500"
+                />
+              </td>
+              <td className="p-2 text-xs">
                 <NetFlowCell value={token.netFlow60s} />
               </td>
               <td className="p-2 text-xs">
@@ -298,7 +408,12 @@ export default function TokenDashboard({
                 {formatNetFlow(token.totalVolume300s)} SOL
               </td>
               <td className="p-2">
-                <BlockButton mint={token.mint} onBlocked={onRefresh} />
+                <button
+                  onClick={() => handleBlockFixed(token.mint)}
+                  className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+                >
+                  Block
+                </button>
               </td>
             </tr>
           ))}

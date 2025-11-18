@@ -1,5 +1,5 @@
 import { getDb, getWriteDb } from './db';
-import { TokenMetrics, SparklineDataPoint, DcaSparklineDataPoint } from './types';
+import { TokenMetrics, SparklineDataPoint, DcaSparklineDataPoint, TokenMetadata } from './types';
 
 function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
   try {
@@ -17,7 +17,7 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
   const db = getDb();
   
   // Phase 6: DCA Rolling Windows - query dca_buys_* columns directly from token_aggregates
-  // Removed deprecated CTE joins for raw_dca and dca_count from token_signals
+  // Phase 7: Exclude blocked tokens via LEFT JOIN with token_metadata
   const query = `
     SELECT
       ta.mint,
@@ -36,7 +36,9 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
       ta.dca_buys_14400s,
       ta.updated_at
     FROM token_aggregates ta
+    LEFT JOIN token_metadata tm ON ta.mint = tm.mint
     WHERE ta.dca_buys_3600s > 0
+      AND (tm.blocked IS NULL OR tm.blocked = 0)
     ORDER BY ta.net_flow_300s_sol DESC
     LIMIT 40
   `;
@@ -207,5 +209,124 @@ export function getLatestSignal(mint: string): { signalType: string; createdAt: 
     signalType: row.signal_type,
     createdAt: row.created_at,
   };
+}
+
+export function getTokenMetadata(mint: string): TokenMetadata | null {
+  const db = getDb();
+  
+  const query = `
+    SELECT 
+      mint, name, symbol, image_url, price_usd, market_cap,
+      follow_price, blocked, updated_at
+    FROM token_metadata
+    WHERE mint = ?
+  `;
+  
+  const stmt = db.prepare(query);
+  const row = stmt.get(mint) as {
+    mint: string;
+    name: string | null;
+    symbol: string | null;
+    image_url: string | null;
+    price_usd: number | null;
+    market_cap: number | null;
+    follow_price: number;
+    blocked: number;
+    updated_at: number;
+  } | undefined;
+  
+  if (!row) return null;
+  
+  return {
+    mint: row.mint,
+    name: row.name ?? undefined,
+    symbol: row.symbol ?? undefined,
+    imageUrl: row.image_url ?? undefined,
+    priceUsd: row.price_usd ?? undefined,
+    marketCap: row.market_cap ?? undefined,
+    followPrice: row.follow_price === 1,
+    blocked: row.blocked === 1,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function setFollowPrice(mint: string, follow: boolean): void {
+  const writeDb = getWriteDb();
+  
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const query = `
+      UPDATE token_metadata 
+      SET follow_price = ?, updated_at = ?
+      WHERE mint = ?
+    `;
+    
+    const stmt = writeDb.prepare(query);
+    stmt.run(follow ? 1 : 0, now, mint);
+  } finally {
+    writeDb.close();
+  }
+}
+
+export function setBlocked(mint: string, blocked: boolean): void {
+  const writeDb = getWriteDb();
+  
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const query = `
+      UPDATE token_metadata 
+      SET blocked = ?, updated_at = ?
+      WHERE mint = ?
+    `;
+    
+    const stmt = writeDb.prepare(query);
+    stmt.run(blocked ? 1 : 0, now, mint);
+  } finally {
+    writeDb.close();
+  }
+}
+
+export function getBlockedTokens(): TokenMetrics[] {
+  const db = getDb();
+  
+  const query = `
+    SELECT
+      ta.mint,
+      ta.net_flow_300s_sol,
+      ta.updated_at
+    FROM token_aggregates ta
+    INNER JOIN token_metadata tm ON ta.mint = tm.mint
+    WHERE tm.blocked = 1
+    ORDER BY ta.updated_at DESC
+    LIMIT 50
+  `;
+  
+  const stmt = db.prepare(query);
+  const rows = stmt.all() as Array<{
+    mint: string;
+    net_flow_300s_sol: number | null;
+    updated_at: number | null;
+  }>;
+  
+  // Simplified return (full fields not needed for blocked view)
+  return rows.map(row => ({
+    mint: row.mint,
+    netFlow60s: 0,
+    netFlow300s: row.net_flow_300s_sol ?? 0,
+    netFlow900s: 0,
+    netFlow3600s: 0,
+    netFlow7200s: 0,
+    netFlow14400s: 0,
+    totalBuys300s: 0,
+    totalSells300s: 0,
+    dcaBuys60s: 0,
+    dcaBuys300sWindow: 0,
+    dcaBuys900s: 0,
+    dcaBuys3600s: 0,
+    dcaBuys14400s: 0,
+    maxUniqueWallets: 0,
+    totalVolume300s: 0,
+    lastUpdate: row.updated_at ?? 0,
+  }));
 }
 

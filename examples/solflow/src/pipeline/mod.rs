@@ -75,6 +75,7 @@ pub mod blocklist;
 pub mod engine;
 pub mod config;
 pub mod ingestion;
+pub mod dexscreener;
 // Note: scheduler module removed in Phase 4.3 - unified flush loop now handles all periodic tasks
 
 // Re-export commonly used types

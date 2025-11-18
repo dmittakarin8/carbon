@@ -51,3 +51,19 @@ export interface DcaSparklineResponse {
   dataPoints: DcaSparklineDataPoint[];
 }
 
+export interface TokenMetadata {
+  mint: string;
+  name?: string;
+  symbol?: string;
+  imageUrl?: string;
+  priceUsd?: number;
+  marketCap?: number;
+  followPrice: boolean;
+  blocked: boolean;
+  updatedAt: number;
+}
+
+export interface MetadataResponse {
+  metadata: TokenMetadata | null;
+}
+

@@ -180,13 +180,97 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine_guard.prune_inactive_mints(now, prune_threshold);
         }
     });
-    info!("   └─ ✅ Pruning task spawned (threshold: {}s)", prune_threshold);
+    info!("   ├─ ✅ Pruning task spawned (threshold: {}s)", prune_threshold);
+
+    // Task 3: Price Monitoring (every 60s with rate limiting)
+    let db_path_price = config.db_path.clone();
+    tokio::spawn(async move {
+        use solflow::pipeline::dexscreener;
+        use rusqlite::Connection;
+        
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        
+        loop {
+            interval.tick().await;
+            
+            // Query tokens with follow_price = 1 (in separate scope to drop connection)
+            let mints: Vec<String> = {
+                let conn = match Connection::open(&db_path_price) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("❌ Failed to open DB for price monitoring: {}", e);
+                        continue;
+                    }
+                };
+                
+                let mut stmt = match conn.prepare(
+                    "SELECT mint FROM token_metadata WHERE follow_price = 1"
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("❌ Failed to prepare price query: {}", e);
+                        continue;
+                    }
+                };
+                
+                match stmt
+                    .query_map([], |row| row.get(0))
+                    .and_then(|rows| rows.collect::<Result<Vec<String>, _>>()) 
+                {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("❌ Failed to fetch follow_price tokens: {}", e);
+                        continue;
+                    }
+                }
+            }; // Connection dropped here
+            
+            if mints.is_empty() {
+                continue;
+            }
+            
+            info!("🔄 Price monitoring: {} tokens tracked", mints.len());
+            
+            // Stagger requests: 300-600ms between calls (2-3 req/sec)
+            for mint in mints {
+                // Fetch metadata (includes price)
+                let metadata = match dexscreener::fetch_token_metadata(&mint).await {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("❌ Failed to fetch metadata for {}: {}", mint, e);
+                        continue;
+                    }
+                };
+                
+                // Update database (in separate scope)
+                {
+                    let conn = match Connection::open(&db_path_price) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("❌ Failed to open DB for price update: {}", e);
+                            continue;
+                        }
+                    };
+                    
+                    if let Err(e) = dexscreener::upsert_metadata(&conn, &metadata) {
+                        error!("❌ Failed to update metadata for {}: {}", mint, e);
+                    }
+                } // Connection dropped here
+                
+                // Rate limiting: sleep 300-600ms
+                let sleep_ms = 300 + (rand::random::<u64>() % 300);
+                tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
+            }
+        }
+    });
+    info!("   └─ ✅ Price monitoring task spawned (60s interval)");
 
     info!("✅ All background tasks running");
     info!("");
     info!("📊 Pipeline Status:");
     info!("   ├─ Ingestion: READY (unified flush every {}ms)", config.flush_interval_ms);
     info!("   ├─ Pruning: READY (threshold: {}s)", prune_threshold);
+    info!("   ├─ Price Monitoring: READY (60s interval)");
     info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
     info!("");
     info!("🔄 Press CTRL+C to shutdown gracefully");
