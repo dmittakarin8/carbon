@@ -4,11 +4,14 @@ import { useState, useEffect } from 'react';
 import { TokenMetrics } from '@/lib/types';
 import TokenDashboard from './components/TokenDashboard';
 import BlockedTokensModal from './components/BlockedTokensModal';
+import FollowedTokensModal from './components/FollowedTokensModal';
 
 export default function Home() {
   const [tokens, setTokens] = useState<TokenMetrics[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [followedCount, setFollowedCount] = useState(0);
+  const [blockedCount, setBlockedCount] = useState(0);
 
   async function fetchTokens() {
     try {
@@ -27,8 +30,22 @@ export default function Home() {
     }
   }
 
+  async function refreshCounts() {
+    try {
+      const response = await fetch('/api/metadata/counts');
+      if (response.ok) {
+        const data = await response.json();
+        setFollowedCount(data.followedCount || 0);
+        setBlockedCount(data.blockedCount || 0);
+      }
+    } catch (err) {
+      console.error('Error fetching counts:', err);
+    }
+  }
+
   useEffect(() => {
     fetchTokens();
+    refreshCounts();
     
     // Auto-refresh every 5 seconds
     const interval = setInterval(fetchTokens, 5000);
@@ -46,7 +63,10 @@ export default function Home() {
               Real-time token metrics with net flow across multiple time windows
             </p>
           </div>
-          <BlockedTokensModal />
+          <div className="flex items-center gap-3">
+            <FollowedTokensModal followedCount={followedCount} onCountChange={refreshCounts} />
+            <BlockedTokensModal blockedCount={blockedCount} onCountChange={refreshCounts} />
+          </div>
         </header>
 
         {loading && tokens.length === 0 ? (

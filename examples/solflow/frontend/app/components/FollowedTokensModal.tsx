@@ -3,27 +3,28 @@
 import { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { TokenMetrics, TokenMetadata } from '@/lib/types';
+import { Star } from 'lucide-react';
 
-interface BlockedTokensModalProps {
-  blockedCount: number;
+interface FollowedTokensModalProps {
+  followedCount: number;
   onCountChange: () => void;
 }
 
-export default function BlockedTokensModal({ blockedCount, onCountChange }: BlockedTokensModalProps) {
+export default function FollowedTokensModal({ followedCount, onCountChange }: FollowedTokensModalProps) {
   const [open, setOpen] = useState(false);
-  const [blockedTokens, setBlockedTokens] = useState<TokenMetrics[]>([]);
+  const [followedTokens, setFollowedTokens] = useState<TokenMetrics[]>([]);
   const [metadata, setMetadata] = useState<Record<string, TokenMetadata>>({});
 
   useEffect(() => {
     if (open) {
-      // Fetch blocked tokens from API
-      fetch('/api/metadata/blocked')
+      // Fetch followed tokens from API
+      fetch('/api/metadata/followed')
         .then(res => res.json())
         .then(data => {
           const tokens = data.tokens || [];
-          setBlockedTokens(tokens);
+          setFollowedTokens(tokens);
           
-          // Fetch metadata for each blocked token
+          // Fetch metadata for each followed token
           tokens.forEach(async (token: TokenMetrics) => {
             try {
               const response = await fetch(`/api/metadata/get?mint=${token.mint}`);
@@ -39,25 +40,25 @@ export default function BlockedTokensModal({ blockedCount, onCountChange }: Bloc
           });
         })
         .catch(error => {
-          console.error('Failed to fetch blocked tokens:', error);
+          console.error('Failed to fetch followed tokens:', error);
         });
     }
   }, [open]);
 
-  async function handleUnblock(mint: string) {
+  async function handleUnfollow(mint: string) {
     try {
-      const response = await fetch('/api/metadata/unblock', {
+      const response = await fetch('/api/metadata/follow', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mint }),
+        body: JSON.stringify({ mint, value: false }),
       });
       
       if (response.ok) {
-        setBlockedTokens(prev => prev.filter(t => t.mint !== mint));
+        setFollowedTokens(prev => prev.filter(t => t.mint !== mint));
         onCountChange();
       }
     } catch (error) {
-      console.error('Failed to unblock:', error);
+      console.error('Failed to unfollow:', error);
     }
   }
 
@@ -65,21 +66,21 @@ export default function BlockedTokensModal({ blockedCount, onCountChange }: Bloc
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>
         <button className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors">
-          🚫 Blocked Tokens ({blockedCount})
+          ⭐ Followed Tokens ({followedCount})
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50" />
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 rounded-lg p-6 shadow-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto">
           <Dialog.Title className="text-lg font-semibold text-white mb-4">
-            Blocked Tokens
+            Followed Tokens
           </Dialog.Title>
           
-          {blockedTokens.length === 0 ? (
-            <p className="text-gray-400">No blocked tokens</p>
+          {followedTokens.length === 0 ? (
+            <p className="text-gray-400">No followed tokens</p>
           ) : (
             <div className="space-y-2">
-              {blockedTokens.map(token => {
+              {followedTokens.map(token => {
                 const meta = metadata[token.mint];
                 return (
                   <div key={token.mint} className="flex items-center justify-between p-3 bg-gray-700/50 rounded">
@@ -91,7 +92,7 @@ export default function BlockedTokensModal({ blockedCount, onCountChange }: Bloc
                           className="w-8 h-8 rounded-full opacity-70"
                         />
                       )}
-                      <div>
+                      <div className="flex-1 min-w-0">
                         {meta?.name || meta?.symbol ? (
                           <>
                             <div className="font-semibold text-gray-200">
@@ -107,12 +108,21 @@ export default function BlockedTokensModal({ blockedCount, onCountChange }: Bloc
                           </div>
                         )}
                       </div>
+                      {meta?.marketCap && (
+                        <div className="text-right">
+                          <div className="text-gray-400 text-xs">Market Cap</div>
+                          <div className="text-gray-200 text-sm">
+                            ${(meta.marketCap / 1_000_000).toFixed(2)}M
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <button
-                      onClick={() => handleUnblock(token.mint)}
-                      className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs transition-colors"
+                      onClick={() => handleUnfollow(token.mint)}
+                      className="ml-4 px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-xs transition-colors flex items-center gap-1.5"
                     >
-                      Unblock
+                      <Star className="w-3.5 h-3.5" fill="currentColor" />
+                      Unfollow
                     </button>
                   </div>
                 );

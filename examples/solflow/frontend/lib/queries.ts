@@ -338,3 +338,67 @@ export function getBlockedTokens(): TokenMetrics[] {
   }));
 }
 
+export function getFollowedTokens(): TokenMetrics[] {
+  const db = getDb();
+  
+  const query = `
+    SELECT
+      ta.mint,
+      ta.net_flow_300s_sol,
+      ta.updated_at
+    FROM token_aggregates ta
+    INNER JOIN token_metadata tm ON ta.mint = tm.mint
+    WHERE tm.follow_price = 1
+    ORDER BY ta.updated_at DESC
+    LIMIT 50
+  `;
+  
+  const stmt = db.prepare(query);
+  const rows = stmt.all() as Array<{
+    mint: string;
+    net_flow_300s_sol: number | null;
+    updated_at: number | null;
+  }>;
+  
+  // Simplified return (full fields not needed for followed view)
+  return rows.map(row => ({
+    mint: row.mint,
+    netFlow60s: 0,
+    netFlow300s: row.net_flow_300s_sol ?? 0,
+    netFlow900s: 0,
+    netFlow3600s: 0,
+    netFlow7200s: 0,
+    netFlow14400s: 0,
+    totalBuys300s: 0,
+    totalSells300s: 0,
+    dcaBuys60s: 0,
+    dcaBuys300sWindow: 0,
+    dcaBuys900s: 0,
+    dcaBuys3600s: 0,
+    dcaBuys14400s: 0,
+    maxUniqueWallets: 0,
+    totalVolume300s: 0,
+    lastUpdate: row.updated_at ?? 0,
+  }));
+}
+
+export function getFollowedCount(): number {
+  const db = getDb();
+  const result = db.prepare(`
+    SELECT COUNT(*) as count 
+    FROM token_metadata 
+    WHERE follow_price = 1
+  `).get() as { count: number };
+  return result.count;
+}
+
+export function getBlockedCount(): number {
+  const db = getDb();
+  const result = db.prepare(`
+    SELECT COUNT(*) as count 
+    FROM token_metadata 
+    WHERE blocked = 1
+  `).get() as { count: number };
+  return result.count;
+}
+
