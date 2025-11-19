@@ -60,6 +60,23 @@ path = "src/bin/aggregator.rs"
 name = "pipeline_runtime"
 path = "src/bin/pipeline_runtime.rs"
 
+# Meta-analysis streamers (feature/streamer-meta-analysis branch)
+[[bin]]
+name = "pumpswap_meta"
+path = "meta_analysis/streamers/pumpswap_meta.rs"
+
+[[bin]]
+name = "bonkswap_meta"
+path = "meta_analysis/streamers/bonkswap_meta.rs"
+
+[[bin]]
+name = "moonshot_meta"
+path = "meta_analysis/streamers/moonshot_meta.rs"
+
+[[bin]]
+name = "jupiter_dca_meta"
+path = "meta_analysis/streamers/jupiter_dca_meta.rs"
+
 [dependencies.rustls]
 default-features = false
 features = ["std", "aws_lc_rs"]

@@ -4,7 +4,7 @@ mod tests;
 pub mod aggregator_core;
 mod aggregator;
 mod config;
-mod empty_decoder;
+pub mod empty_decoder;
 mod persistence;
 mod state;
 pub mod sqlite_pragma;
@@ -13,6 +13,7 @@ mod ui;
 
 pub mod streamer_core;
 pub mod pipeline;
+pub mod meta_analysis;
 
 use {
     async_trait::async_trait,
