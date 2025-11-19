@@ -515,12 +515,7 @@ export default function TokenDashboard({
 
                 {/* DCA Sparkline */}
                 <td className="px-5 py-3 text-center">
-                  <DcaSparkline
-                    dcaBuys60s={token.dcaBuys60s}
-                    dcaBuys300s={token.dcaBuys300sWindow}
-                    dcaBuys900s={token.dcaBuys900s}
-                    dcaBuys3600s={token.dcaBuys3600s}
-                    dcaBuys14400s={token.dcaBuys14400s}
+                  <DcaSparkline mint={token.mint}
                   />
                 </td>
 

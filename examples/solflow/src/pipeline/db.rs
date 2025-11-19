@@ -50,6 +50,11 @@ pub trait AggregateDbWriter: Send + Sync {
         &self,
         signal: TokenSignal,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Downcast helper for accessing concrete implementation
+    ///
+    /// Phase 7: Required for cleanup_old_dca_buckets access
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// Run schema migrations from SQL files
@@ -159,6 +164,69 @@ impl SqliteAggregateWriter {
 
         let blocked = stmt.exists([mint, &now.to_string()])?;
         Ok(blocked)
+    }
+
+    /// Write DCA activity buckets for sparkline visualization
+    ///
+    /// Phase 7: DCA Sparkline Foundation (feature/dca-sparkline-backend)
+    ///
+    /// Computes 1-minute bucket timestamp and writes DCA buy count.
+    /// Uses UPSERT (INSERT OR REPLACE) for idempotency.
+    ///
+    /// Arguments:
+    /// - `tx`: Active transaction (for batch atomicity)
+    /// - `mint`: Token mint address
+    /// - `timestamp`: Current timestamp (will be floored to minute boundary)
+    /// - `buy_count`: Number of DCA buys in this bucket
+    ///
+    /// Note: This is called within write_aggregates transaction for atomic writes.
+    fn write_dca_buckets(
+        tx: &rusqlite::Transaction,
+        mint: &str,
+        timestamp: i64,
+        buy_count: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Floor timestamp to 60-second boundary
+        let bucket_timestamp = (timestamp / 60) * 60;
+
+        tx.execute(
+            r#"
+            INSERT OR REPLACE INTO dca_activity_buckets (
+                mint, bucket_timestamp, buy_count
+            ) VALUES (?, ?, ?)
+            "#,
+            rusqlite::params![mint, bucket_timestamp, buy_count],
+        )?;
+
+        Ok(())
+    }
+
+    /// Clean up old DCA activity buckets
+    ///
+    /// Phase 7: DCA Sparkline Foundation
+    ///
+    /// Deletes buckets older than 2 hours (7200 seconds) to prevent unbounded growth.
+    /// Should be called periodically (every 5 minutes recommended).
+    ///
+    /// Returns: Number of rows deleted
+    pub fn cleanup_old_dca_buckets(&self) -> Result<usize, Box<dyn std::error::Error>> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs() as i64;
+        
+        let cutoff = now - 7200; // 2 hours
+
+        let deleted = conn.execute(
+            "DELETE FROM dca_activity_buckets WHERE bucket_timestamp < ?",
+            rusqlite::params![cutoff],
+        )?;
+
+        if deleted > 0 {
+            log::debug!("🧹 Cleaned up {} old DCA buckets (older than {})", deleted, cutoff);
+        }
+
+        Ok(deleted)
     }
 }
 
@@ -289,6 +357,17 @@ impl AggregateDbWriter for SqliteAggregateWriter {
                 )?;
             }
 
+            // Phase 7: Write DCA activity buckets for sparkline visualization
+            // Process DCA buckets for each aggregate in this batch
+            for agg in chunk {
+                if let Some(dca_3600s) = agg.dca_buys_3600s {
+                    // Only write buckets if there's DCA activity in the 1-hour window
+                    if dca_3600s > 0 {
+                        Self::write_dca_buckets(&tx, &agg.mint, agg.updated_at, dca_3600s)?;
+                    }
+                }
+            }
+
             tx.commit()?;
 
             log::debug!(
@@ -356,6 +435,11 @@ impl AggregateDbWriter for SqliteAggregateWriter {
         tx.commit()?;
 
         Ok(())
+    }
+
+    /// Downcast helper for accessing concrete implementation
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -446,6 +530,19 @@ mod tests {
                 created_at      INTEGER NOT NULL,
                 sent_to_discord INTEGER NOT NULL DEFAULT 0,
                 seen_in_terminal INTEGER NOT NULL DEFAULT 0
+            )
+            "#,
+            [],
+        )?;
+
+        // Schema from /sql/06_dca_activity_buckets.sql (Phase 7)
+        conn.execute(
+            r#"
+            CREATE TABLE IF NOT EXISTS dca_activity_buckets (
+                mint TEXT NOT NULL,
+                bucket_timestamp INTEGER NOT NULL,
+                buy_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (mint, bucket_timestamp)
             )
             "#,
             [],

@@ -156,35 +156,40 @@ export function unblockToken(mint: string): void {
 export function getDcaSparklineData(mint: string): DcaSparklineDataPoint[] {
   const db = getDb();
   
-  // Check if trades table exists (it may not be present in all database setups)
-  if (!tableExists(db, 'trades')) {
+  // Phase 7: Query dca_activity_buckets table (time-series data)
+  // Check if table exists (may not exist if pipeline hasn't run migration yet)
+  if (!tableExists(db, 'dca_activity_buckets')) {
+    console.warn('dca_activity_buckets table does not exist yet - pipeline migration pending');
     return [];
   }
   
-  // Get DCA BUY trades grouped by minute for last 60 minutes
+  // Get last 60 minutes of 1-minute buckets (60 data points)
   const query = `
     SELECT 
-      (timestamp / 60) * 60 AS minute_timestamp,
-      COUNT(*) AS buy_count
-    FROM trades
+      bucket_timestamp as timestamp,
+      buy_count
+    FROM dca_activity_buckets
     WHERE mint = ?
-      AND program_name = 'JupiterDCA'
-      AND action = 'BUY'
-      AND timestamp > unixepoch() - 3600
-    GROUP BY minute_timestamp
-    ORDER BY minute_timestamp ASC
+      AND bucket_timestamp > unixepoch() - 3600
+    ORDER BY bucket_timestamp ASC
+    LIMIT 60
   `;
   
-  const stmt = db.prepare(query);
-  const rows = stmt.all(mint) as Array<{
-    minute_timestamp: number;
-    buy_count: number;
-  }>;
-  
-  return rows.map(row => ({
-    timestamp: row.minute_timestamp,
-    buyCount: row.buy_count,
-  }));
+  try {
+    const stmt = db.prepare(query);
+    const rows = stmt.all(mint) as Array<{
+      timestamp: number;
+      buy_count: number;
+    }>;
+    
+    return rows.map(row => ({
+      timestamp: row.timestamp,
+      buyCount: row.buy_count,
+    }));
+  } catch (error) {
+    console.error('Error querying dca_activity_buckets:', error);
+    return [];
+  }
 }
 
 export function getLatestSignal(mint: string): { signalType: string; createdAt: number } | null {

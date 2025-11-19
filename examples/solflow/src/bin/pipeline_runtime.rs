@@ -16,7 +16,7 @@
 //!   STREAMER_CHANNEL_BUFFER - Channel size (default: 10000)
 
 use dotenv::dotenv;
-use log::{error, info};
+use log::{error, info, warn};
 use rusqlite::Connection;
 use solflow::pipeline::{
     config::PipelineConfig,
@@ -187,6 +187,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     info!("   ├─ ✅ Pruning task spawned (threshold: {}s)", prune_threshold);
+
+    // Task 2b: DCA Bucket Cleanup (every 5 minutes, removes buckets older than 2 hours)
+    // Phase 7: DCA Sparkline Foundation
+    let db_writer_cleanup = db_writer.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            
+            // Downcast Arc<dyn AggregateDbWriter> to SqliteAggregateWriter
+            // This is safe because we know we created a SqliteAggregateWriter above
+            if let Some(sqlite_writer) = db_writer_cleanup
+                .as_any()
+                .downcast_ref::<solflow::pipeline::db::SqliteAggregateWriter>()
+            {
+                match sqlite_writer.cleanup_old_dca_buckets() {
+                    Ok(deleted) if deleted > 0 => {
+                        info!("🧹 DCA bucket cleanup: removed {} old buckets", deleted);
+                    }
+                    Err(e) => {
+                        error!("❌ DCA bucket cleanup failed: {}", e);
+                    }
+                    _ => {} // No buckets deleted, skip log
+                }
+            } else {
+                warn!("⚠️  Cannot downcast db_writer to SqliteAggregateWriter for cleanup");
+            }
+        }
+    });
+    info!("   ├─ ✅ DCA bucket cleanup task spawned (interval: 300s)");
 
     // Task 3: Price Monitoring (every 60s with rate limiting)
     let db_path_price = config.db_path.clone();
