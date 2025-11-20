@@ -1,49 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { TokenMetrics, TokenMetadata } from '@/lib/types';
+import { DashboardData } from '@/lib/dashboard-client';
 import { Star } from 'lucide-react';
 
 interface FollowedTokensModalProps {
   followedCount: number;
   onCountChange: () => void;
+  dashboardData: DashboardData;
+  followedTokens: string[];
 }
 
-export default function FollowedTokensModal({ followedCount, onCountChange }: FollowedTokensModalProps) {
+export default function FollowedTokensModal({ 
+  followedCount, 
+  onCountChange,
+  dashboardData,
+  followedTokens
+}: FollowedTokensModalProps) {
   const [open, setOpen] = useState(false);
-  const [followedTokens, setFollowedTokens] = useState<TokenMetrics[]>([]);
-  const [metadata, setMetadata] = useState<Record<string, TokenMetadata>>({});
-
-  useEffect(() => {
-    if (open) {
-      // Fetch followed tokens from API
-      fetch('/api/metadata/followed')
-        .then(res => res.json())
-        .then(data => {
-          const tokens = data.tokens || [];
-          setFollowedTokens(tokens);
-          
-          // Fetch metadata for each followed token
-          tokens.forEach(async (token: TokenMetrics) => {
-            try {
-              const response = await fetch(`/api/metadata/get?mint=${token.mint}`);
-              if (response.ok) {
-                const metaData = await response.json();
-                if (metaData.metadata) {
-                  setMetadata(prev => ({ ...prev, [token.mint]: metaData.metadata }));
-                }
-              }
-            } catch (error) {
-              console.error('Failed to fetch metadata:', error);
-            }
-          });
-        })
-        .catch(error => {
-          console.error('Failed to fetch followed tokens:', error);
-        });
-    }
-  }, [open]);
 
   async function handleUnfollow(mint: string) {
     try {
@@ -54,7 +29,7 @@ export default function FollowedTokensModal({ followedCount, onCountChange }: Fo
       });
       
       if (response.ok) {
-        setFollowedTokens(prev => prev.filter(t => t.mint !== mint));
+        // Trigger dashboard refresh to get updated state
         onCountChange();
       }
     } catch (error) {
@@ -80,10 +55,10 @@ export default function FollowedTokensModal({ followedCount, onCountChange }: Fo
             <p className="text-gray-400">No followed tokens</p>
           ) : (
             <div className="space-y-2">
-              {followedTokens.map(token => {
-                const meta = metadata[token.mint];
+              {followedTokens.map(mint => {
+                const meta = dashboardData.metadata[mint];
                 return (
-                  <div key={token.mint} className="flex items-center justify-between p-3 bg-gray-700/50 rounded">
+                  <div key={mint} className="flex items-center justify-between p-3 bg-gray-700/50 rounded">
                     <div className="flex items-center gap-3 flex-1">
                       {meta?.imageUrl && (
                         <img 
@@ -104,7 +79,7 @@ export default function FollowedTokensModal({ followedCount, onCountChange }: Fo
                           </>
                         ) : (
                           <div className="font-mono text-sm text-gray-300">
-                            {token.mint.slice(0, 8)}...{token.mint.slice(-8)}
+                            {mint.slice(0, 8)}...{mint.slice(-8)}
                           </div>
                         )}
                       </div>
@@ -118,7 +93,7 @@ export default function FollowedTokensModal({ followedCount, onCountChange }: Fo
                       )}
                     </div>
                     <button
-                      onClick={() => handleUnfollow(token.mint)}
+                      onClick={() => handleUnfollow(mint)}
                       className="ml-4 px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-xs transition-colors flex items-center gap-1.5"
                     >
                       <Star className="w-3.5 h-3.5" fill="currentColor" />

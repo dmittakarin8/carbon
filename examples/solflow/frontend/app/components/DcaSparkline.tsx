@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-
 /**
  * DcaSparkline - Time-series DCA activity visualization
  * 
  * Phase 7: DCA Sparkline Foundation (feature/dca-sparkline-backend)
+ * Phase 8: Batched Dashboard Architecture (feature/batched-dashboard-architecture)
  * 
  * Renders a true sparkline showing DCA BUY activity over the last 60 minutes
  * with 1-minute bucket resolution (60 data points).
@@ -14,69 +13,30 @@ import { useEffect, useState } from 'react';
  * 
  * Architecture:
  * - Backend: Writes 1-minute buckets to database on every flush cycle
- * - API: GET /api/dca-sparkline/[mint] returns last 60 buckets
- * - Frontend: Renders continuous sparkline with consistent bucket spacing
+ * - API: GET /api/dashboard returns ALL sparklines in one batched request
+ * - Frontend: Receives data as props (no per-component fetching)
  * 
  * Features:
  * - True time-series visualization (not rolling-window snapshots)
  * - Handles sparse data gracefully (missing buckets = 0 activity)
  * - Persists across pipeline restarts (database-backed)
  * - Automatic cleanup (buckets older than 2 hours removed every 5 minutes)
+ * - Zero N+1 queries (data comes from batched endpoint)
  */
 
 interface DcaSparklineProps {
   mint: string;
+  dataPoints: Array<{ timestamp: number; buyCount: number }>;
   width?: number;
   height?: number;
 }
 
-interface DataPoint {
-  timestamp: number;
-  buyCount: number;
-}
-
 export default function DcaSparkline({
   mint,
+  dataPoints,
   width = 100,
   height = 20,
 }: DcaSparklineProps) {
-  const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const response = await fetch(`/api/dca-sparkline/${mint}`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch sparkline data');
-        }
-        const data = await response.json();
-        setDataPoints(data.dataPoints || []);
-      } catch (error) {
-        console.error('Error fetching DCA sparkline:', error);
-        setDataPoints([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchData();
-    // Refresh every 60 seconds
-    const interval = setInterval(fetchData, 60000);
-    return () => clearInterval(interval);
-  }, [mint]);
-
-  if (loading) {
-    return (
-      <div
-        className="flex items-center justify-center text-gray-500 text-xs"
-        style={{ width, height }}
-      >
-        ...
-      </div>
-    );
-  }
-
   if (dataPoints.length === 0) {
     return (
       <div

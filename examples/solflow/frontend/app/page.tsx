@@ -1,54 +1,39 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { TokenMetrics } from '@/lib/types';
+import { fetchDashboardSafe, DashboardData } from '@/lib/dashboard-client';
 import TokenDashboard from './components/TokenDashboard';
 import BlockedTokensModal from './components/BlockedTokensModal';
 import FollowedTokensModal from './components/FollowedTokensModal';
 
 export default function Home() {
-  const [tokens, setTokens] = useState<TokenMetrics[]>([]);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [followedCount, setFollowedCount] = useState(0);
-  const [blockedCount, setBlockedCount] = useState(0);
 
-  async function fetchTokens() {
+  async function fetchDashboard() {
     try {
-      const response = await fetch('/api/tokens');
-      if (!response.ok) {
-        throw new Error('Failed to fetch tokens');
+      const data = await fetchDashboardSafe();
+      if (data) {
+        setDashboardData(data);
+        setError(null);
+      } else {
+        setError('Failed to fetch dashboard data');
       }
-      const data = await response.json();
-      setTokens(data.tokens || []);
-      setError(null);
     } catch (err) {
-      console.error('Error fetching tokens:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch tokens');
+      console.error('Error fetching dashboard:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch dashboard');
     } finally {
       setLoading(false);
     }
   }
 
-  async function refreshCounts() {
-    try {
-      const response = await fetch('/api/metadata/counts');
-      if (response.ok) {
-        const data = await response.json();
-        setFollowedCount(data.followedCount || 0);
-        setBlockedCount(data.blockedCount || 0);
-      }
-    } catch (err) {
-      console.error('Error fetching counts:', err);
-    }
-  }
-
   useEffect(() => {
-    fetchTokens();
-    refreshCounts();
+    // Initial fetch
+    fetchDashboard();
     
-    // Auto-refresh every 5 seconds
-    const interval = setInterval(fetchTokens, 5000);
+    // Auto-refresh every 10 seconds
+    const interval = setInterval(fetchDashboard, 10000);
     
     return () => clearInterval(interval);
   }, []);
@@ -64,25 +49,38 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <FollowedTokensModal followedCount={followedCount} onCountChange={refreshCounts} />
-            <BlockedTokensModal blockedCount={blockedCount} onCountChange={refreshCounts} />
+            <FollowedTokensModal 
+              followedCount={dashboardData?.counts.followed ?? 0} 
+              onCountChange={fetchDashboard}
+              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
+              followedTokens={dashboardData?.followedTokens ?? []}
+            />
+            <BlockedTokensModal 
+              blockedCount={dashboardData?.counts.blocked ?? 0} 
+              onCountChange={fetchDashboard}
+              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
+              blockedTokens={dashboardData?.blockedTokens ?? []}
+            />
           </div>
         </header>
 
-        {loading && tokens.length === 0 ? (
+        {loading && !dashboardData ? (
           <div className="text-center py-12 text-gray-400">
-            Loading tokens...
+            Loading dashboard...
           </div>
         ) : error ? (
           <div className="text-center py-12 text-red-400">
             Error: {error}
           </div>
-        ) : (
-          <TokenDashboard tokens={tokens} onRefresh={fetchTokens} />
-        )}
+        ) : dashboardData ? (
+          <TokenDashboard 
+            dashboardData={dashboardData}
+            onRefresh={fetchDashboard} 
+          />
+        ) : null}
 
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Auto-refreshing every 5 seconds • {tokens.length} tokens
+          Auto-refreshing every 10 seconds • {dashboardData?.tokens.length ?? 0} tokens
         </footer>
       </div>
     </div>
