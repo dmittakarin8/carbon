@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { TokenMetrics, TokenSignal, TokenMetadata } from '@/lib/types';
+import { useState, useMemo } from 'react';
+import { DashboardData } from '@/lib/dashboard-client';
 import DcaSparkline from './DcaSparkline';
-import BlockButton from './BlockButton';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { TrendingUp, Target, Zap, AlertTriangle, Minus, Star, RefreshCw, Download, Ban, Copy, Check } from 'lucide-react';
 
@@ -17,12 +16,8 @@ type SortField =
 type SortDirection = 'asc' | 'desc';
 
 interface TokenDashboardProps {
-  tokens: TokenMetrics[];
+  dashboardData: DashboardData;
   onRefresh: () => void;
-}
-
-interface TokenWithSignal extends TokenMetrics {
-  signal?: TokenSignal | null;
 }
 
 function formatNetFlow(value: number): string {
@@ -124,71 +119,13 @@ function SignalIcon({ signalType }: { signalType: string | null }) {
 }
 
 export default function TokenDashboard({
-  tokens,
+  dashboardData,
   onRefresh,
 }: TokenDashboardProps) {
   const [sortField, setSortField] = useState<SortField>('netFlow900s');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [signals, setSignals] = useState<Record<string, TokenSignal | null>>({});
-  const [metadata, setMetadata] = useState<Record<string, TokenMetadata>>({});
 
-  useEffect(() => {
-    // Fetch signals for all tokens
-    async function fetchSignals() {
-      const signalPromises = tokens.map(async (token) => {
-        try {
-          const response = await fetch(`/api/tokens/${token.mint}/signal`);
-          if (response.ok) {
-            const signal = await response.json();
-            return { mint: token.mint, signal };
-          }
-        } catch (error) {
-          console.error(`Error fetching signal for ${token.mint}:`, error);
-        }
-        return { mint: token.mint, signal: null };
-      });
-
-      const results = await Promise.all(signalPromises);
-      const signalsMap: Record<string, TokenSignal | null> = {};
-      results.forEach(({ mint, signal }) => {
-        signalsMap[mint] = signal;
-      });
-      setSignals(signalsMap);
-    }
-
-    if (tokens.length > 0) {
-      fetchSignals();
-    }
-  }, [tokens]);
-
-  useEffect(() => {
-    // Fetch metadata for all tokens
-    async function fetchMetadata() {
-      const metadataPromises = tokens.map(async (token) => {
-        try {
-          const response = await fetch(`/api/metadata/get?mint=${token.mint}`);
-          if (response.ok) {
-            const data = await response.json();
-            return { mint: token.mint, metadata: data.metadata };
-          }
-        } catch (error) {
-          console.error(`Error fetching metadata for ${token.mint}:`, error);
-        }
-        return { mint: token.mint, metadata: null };
-      });
-
-      const results = await Promise.all(metadataPromises);
-      const metadataMap: Record<string, TokenMetadata> = {};
-      results.forEach(({ mint, metadata }) => {
-        if (metadata) metadataMap[mint] = metadata;
-      });
-      setMetadata(metadataMap);
-    }
-
-    if (tokens.length > 0) {
-      fetchMetadata();
-    }
-  }, [tokens]);
+  const { tokens, metadata, signals } = dashboardData;
 
   const sortedTokens = useMemo(() => {
     const sorted = [...tokens].sort((a, b) => {
@@ -231,11 +168,8 @@ export default function TokenDashboard({
       });
       
       if (response.ok) {
-        // Update local state
-        setMetadata(prev => ({
-          ...prev,
-          [mint]: { ...prev[mint], followPrice: value, mint, blocked: false, updatedAt: Date.now() / 1000 },
-        }));
+        // Refresh dashboard to get updated state
+        onRefresh();
       }
     } catch (error) {
       console.error('Failed to toggle follow price:', error);
@@ -267,15 +201,8 @@ export default function TokenDashboard({
       });
       
       if (response.ok) {
-        // Refetch metadata for this token
-        const metaResponse = await fetch(`/api/metadata/get?mint=${mint}`);
-        if (metaResponse.ok) {
-          const data = await metaResponse.json();
-          setMetadata(prev => ({
-            ...prev,
-            [mint]: data.metadata,
-          }));
-        }
+        // Refresh dashboard to get updated metadata
+        onRefresh();
       }
     } catch (error) {
       console.error('Failed to get metadata:', error);
@@ -515,7 +442,9 @@ export default function TokenDashboard({
 
                 {/* DCA Sparkline */}
                 <td className="px-5 py-3 text-center">
-                  <DcaSparkline mint={token.mint}
+                  <DcaSparkline 
+                    mint={token.mint}
+                    dataPoints={dashboardData.dcaSparklines[token.mint] || []}
                   />
                 </td>
 
