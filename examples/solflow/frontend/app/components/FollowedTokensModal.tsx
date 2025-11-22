@@ -82,7 +82,7 @@ export default function FollowedTokensModal({
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 rounded-lg shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col z-50">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 rounded-lg shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col z-50">
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
             <Dialog.Title className="text-base font-semibold text-white">
