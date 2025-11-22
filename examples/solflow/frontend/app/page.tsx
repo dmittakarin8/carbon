@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { fetchDashboardSafe, DashboardData } from '@/lib/dashboard-client';
+import { useFollowedTokenRefresh } from '@/lib/use-followed-token-refresh';
 import TokenDashboard from './components/TokenDashboard';
 import BlockedTokensModal from './components/BlockedTokensModal';
 import FollowedTokensModal from './components/FollowedTokensModal';
@@ -37,6 +38,9 @@ export default function Home() {
     
     return () => clearInterval(interval);
   }, []);
+
+  // Auto-refresh followed tokens (staggered, 5s interval)
+  useFollowedTokenRefresh(dashboardData?.counts.followed ?? 0);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -80,7 +84,12 @@ export default function Home() {
         ) : null}
 
         <footer className="mt-8 text-center text-xs text-gray-500">
-          Auto-refreshing every 10 seconds • {dashboardData?.tokens.length ?? 0} tokens
+          <div>Auto-refreshing every 10 seconds • {dashboardData?.tokens.length ?? 0} tokens</div>
+          {(dashboardData?.counts.followed ?? 0) > 0 && (
+            <div className="mt-1 text-yellow-500/70">
+              ⭐ Following {dashboardData?.counts.followed ?? 0} token{(dashboardData?.counts.followed ?? 0) !== 1 ? 's' : ''} • Price updates every ~{(dashboardData?.counts.followed ?? 0) * 5}s
+            </div>
+          )}
         </footer>
       </div>
     </div>

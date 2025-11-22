@@ -12,6 +12,16 @@ interface FollowedTokensModalProps {
   followedTokens: string[];
 }
 
+function formatTimeAgo(timestamp: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - timestamp;
+  
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 export default function FollowedTokensModal({ 
   followedCount, 
   onCountChange,
@@ -83,14 +93,29 @@ export default function FollowedTokensModal({
                           </div>
                         )}
                       </div>
-                      {meta?.marketCap && (
-                        <div className="text-right">
-                          <div className="text-gray-400 text-xs">Market Cap</div>
-                          <div className="text-gray-200 text-sm">
-                            ${(meta.marketCap / 1_000_000).toFixed(2)}M
+                      <div className="text-right">
+                        {meta?.priceUsd && (
+                          <div className="mb-1">
+                            <div className="text-gray-400 text-xs">Price</div>
+                            <div className="text-gray-200 text-sm">
+                              ${meta.priceUsd.toFixed(6)}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                        {meta?.marketCap && (
+                          <div>
+                            <div className="text-gray-400 text-xs">Market Cap</div>
+                            <div className="text-gray-200 text-sm">
+                              ${(meta.marketCap / 1_000_000).toFixed(2)}M
+                            </div>
+                          </div>
+                        )}
+                        {meta?.updatedAt && (
+                          <div className="text-gray-500 text-xs mt-1">
+                            Updated {formatTimeAgo(meta.updatedAt)}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={() => handleUnfollow(mint)}
