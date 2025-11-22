@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { DashboardData } from '@/lib/dashboard-client';
-import { Star } from 'lucide-react';
+import { Star, X } from 'lucide-react';
 
 interface FollowedTokensModalProps {
   followedCount: number;
@@ -16,10 +16,24 @@ function formatTimeAgo(timestamp: number): string {
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
   
-  if (diff < 60) return 'just now';
+  if (diff < 10) return `${diff}s ago`;
+  if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatPrice(price: number): string {
+  if (price >= 1) return `$${price.toFixed(4)}`;
+  if (price >= 0.0001) return `$${price.toFixed(6)}`;
+  return `$${price.toExponential(2)}`;
+}
+
+function formatMarketCap(mcap: number): string {
+  if (mcap >= 1_000_000_000) return `$${(mcap / 1_000_000_000).toFixed(2)}B`;
+  if (mcap >= 1_000_000) return `$${(mcap / 1_000_000).toFixed(2)}M`;
+  if (mcap >= 1_000) return `$${(mcap / 1_000).toFixed(1)}K`;
+  return `$${mcap.toFixed(0)}`;
 }
 
 export default function FollowedTokensModal({ 
@@ -29,6 +43,18 @@ export default function FollowedTokensModal({
   followedTokens
 }: FollowedTokensModalProps) {
   const [open, setOpen] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
+
+  // Update current time every second to refresh "ago" timestamps
+  useEffect(() => {
+    if (!open) return;
+    
+    const interval = setInterval(() => {
+      setCurrentTime(Math.floor(Date.now() / 1000));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [open]);
 
   async function handleUnfollow(mint: string) {
     try {
@@ -55,86 +81,131 @@ export default function FollowedTokensModal({
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 rounded-lg p-6 shadow-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto">
-          <Dialog.Title className="text-lg font-semibold text-white mb-4">
-            Followed Tokens
-          </Dialog.Title>
+        <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gray-800 rounded-lg shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col z-50">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+            <Dialog.Title className="text-base font-semibold text-white">
+              Followed Tokens ({followedCount})
+            </Dialog.Title>
+            <Dialog.Close asChild>
+              <button className="text-gray-400 hover:text-gray-200 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </Dialog.Close>
+          </div>
           
-          {followedTokens.length === 0 ? (
-            <p className="text-gray-400">No followed tokens</p>
-          ) : (
-            <div className="space-y-2">
-              {followedTokens.map(mint => {
-                const meta = dashboardData.metadata[mint];
-                return (
-                  <div key={mint} className="flex items-center justify-between p-3 bg-gray-700/50 rounded">
-                    <div className="flex items-center gap-3 flex-1">
-                      {meta?.imageUrl && (
+          {/* Body - Scrollable */}
+          <div className="flex-1 overflow-y-auto px-5 py-3">
+            {followedTokens.length === 0 ? (
+              <div className="text-center py-12 text-gray-400 text-sm">
+                No followed tokens. Click the star icon on any token to follow it.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {followedTokens.map(mint => {
+                  const meta = dashboardData.metadata[mint];
+                  const hasMetadata = meta && (meta.name || meta.symbol);
+                  
+                  return (
+                    <div 
+                      key={mint} 
+                      className="flex items-center gap-3 px-3 py-1.5 bg-gray-700/30 hover:bg-gray-700/50 rounded transition-colors border border-gray-700/50"
+                    >
+                      {/* Token Image */}
+                      {meta?.imageUrl ? (
                         <img 
                           src={meta.imageUrl} 
                           alt={meta.symbol || 'Token'}
-                          className="w-8 h-8 rounded-full opacity-70"
+                          className="w-7 h-7 rounded-full flex-shrink-0"
                         />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-gray-700 flex-shrink-0" />
                       )}
-                      <div className="flex-1 min-w-0">
-                        {meta?.name || meta?.symbol ? (
+                      
+                      {/* Token Name & Symbol */}
+                      <div className="flex-1 min-w-0 max-w-[180px]">
+                        {hasMetadata ? (
                           <>
-                            <div className="font-semibold text-gray-200">
-                              {meta.name || 'Unknown'}
+                            <div className="font-medium text-gray-100 text-sm truncate leading-tight">
+                              {meta.symbol || 'Unknown'}
                             </div>
-                            <div className="text-gray-500 text-xs">
-                              {meta.symbol || '—'}
+                            <div className="text-gray-500 text-xs truncate leading-tight">
+                              {meta.name || '—'}
                             </div>
                           </>
                         ) : (
-                          <div className="font-mono text-sm text-gray-300">
-                            {mint.slice(0, 8)}...{mint.slice(-8)}
+                          <div className="font-mono text-xs text-gray-400 truncate">
+                            {mint.slice(0, 12)}...{mint.slice(-6)}
                           </div>
                         )}
                       </div>
-                      <div className="text-right">
-                        {meta?.priceUsd && (
-                          <div className="mb-1">
-                            <div className="text-gray-400 text-xs">Price</div>
-                            <div className="text-gray-200 text-sm">
-                              ${meta.priceUsd.toFixed(6)}
+                      
+                      {/* Price */}
+                      <div className="text-right min-w-[90px]">
+                        {meta?.priceUsd ? (
+                          <>
+                            <div className="text-gray-100 text-sm font-medium leading-tight">
+                              {formatPrice(meta.priceUsd)}
                             </div>
-                          </div>
-                        )}
-                        {meta?.marketCap && (
-                          <div>
-                            <div className="text-gray-400 text-xs">Market Cap</div>
-                            <div className="text-gray-200 text-sm">
-                              ${(meta.marketCap / 1_000_000).toFixed(2)}M
-                            </div>
-                          </div>
-                        )}
-                        {meta?.updatedAt && (
-                          <div className="text-gray-500 text-xs mt-1">
-                            Updated {formatTimeAgo(meta.updatedAt)}
-                          </div>
+                            <div className="text-gray-500 text-xs leading-tight">Price</div>
+                          </>
+                        ) : (
+                          <div className="text-gray-600 text-xs">No price</div>
                         )}
                       </div>
+                      
+                      {/* Market Cap */}
+                      <div className="text-right min-w-[80px]">
+                        {meta?.marketCap ? (
+                          <>
+                            <div className="text-gray-100 text-sm font-medium leading-tight">
+                              {formatMarketCap(meta.marketCap)}
+                            </div>
+                            <div className="text-gray-500 text-xs leading-tight">MCap</div>
+                          </>
+                        ) : (
+                          <div className="text-gray-600 text-xs">—</div>
+                        )}
+                      </div>
+                      
+                      {/* Last Updated */}
+                      <div className="text-right min-w-[65px]">
+                        {meta?.updatedAt ? (
+                          <div className="text-gray-400 text-xs leading-tight">
+                            {formatTimeAgo(meta.updatedAt)}
+                          </div>
+                        ) : (
+                          <div className="text-gray-600 text-xs">—</div>
+                        )}
+                      </div>
+                      
+                      {/* Unfollow Button */}
+                      <button
+                        onClick={() => handleUnfollow(mint)}
+                        className="ml-2 px-2 py-1 bg-yellow-600/90 hover:bg-yellow-600 text-white rounded text-xs transition-colors flex items-center gap-1 flex-shrink-0"
+                        title="Unfollow"
+                      >
+                        <Star className="w-3 h-3" fill="currentColor" />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => handleUnfollow(mint)}
-                      className="ml-4 px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-xs transition-colors flex items-center gap-1.5"
-                    >
-                      <Star className="w-3.5 h-3.5" fill="currentColor" />
-                      Unfollow
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
           
-          <Dialog.Close asChild>
-            <button className="mt-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors">
-              Close
-            </button>
-          </Dialog.Close>
+          {/* Footer */}
+          <div className="px-5 py-3 border-t border-gray-700 flex items-center justify-between">
+            <div className="text-xs text-gray-500">
+              Auto-refreshing every ~{followedCount * 5}s
+            </div>
+            <Dialog.Close asChild>
+              <button className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-xs transition-colors">
+                Close
+              </button>
+            </Dialog.Close>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
