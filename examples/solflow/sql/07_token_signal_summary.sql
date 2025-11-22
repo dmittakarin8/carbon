@@ -15,10 +15,11 @@ CREATE TABLE IF NOT EXISTS token_signal_summary (
     appearance_72h      INTEGER NOT NULL DEFAULT 0,  -- Count of appearances in top lists (72h)
     
     -- Metadata
-    updated_at          INTEGER NOT NULL,            -- Unix timestamp
+    updated_at          INTEGER NOT NULL             -- Unix timestamp
     
-    -- Foreign key constraint (token_address references token_metadata.mint)
-    FOREIGN KEY (token_address) REFERENCES token_metadata(mint) ON DELETE CASCADE
+    -- Note: No foreign key constraint on token_address
+    -- Rationale: Token aggregates can exist before metadata is fetched
+    -- This allows persistence scoring to run independently of metadata enrichment
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_signal_summary_persistence_score
