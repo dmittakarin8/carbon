@@ -299,7 +299,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    info!("   └─ ✅ Price monitoring task spawned (60s interval)");
+    info!("   ├─ ✅ Price monitoring task spawned (60s interval)");
+
+    // Task 4: Persistence Scoring Engine (Phase 2 - every 60s)
+    let db_path_scorer = config.db_path.clone();
+    tokio::spawn(async move {
+        use solflow::pipeline::persistence_scorer::PersistenceScorer;
+        
+        let scorer = PersistenceScorer::new(db_path_scorer);
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        
+        loop {
+            interval.tick().await;
+            
+            info!("🧮 Running persistence scoring cycle...");
+            
+            match scorer.run_scoring_cycle() {
+                Ok(count) => {
+                    info!("✅ Persistence scoring: updated {} tokens", count);
+                }
+                Err(e) => {
+                    error!("❌ Persistence scoring failed: {}", e);
+                }
+            }
+        }
+    });
+    info!("   └─ ✅ Persistence scoring task spawned (60s interval)");
 
     info!("✅ All background tasks running");
     info!("");
@@ -307,6 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   ├─ Ingestion: READY (unified flush every {}ms)", config.flush_interval_ms);
     info!("   ├─ Pruning: READY (threshold: {}s)", prune_threshold);
     info!("   ├─ Price Monitoring: READY (60s interval)");
+    info!("   ├─ Persistence Scoring: READY (60s interval)");
     info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
     info!("");
     info!("🔄 Press CTRL+C to shutdown gracefully");
