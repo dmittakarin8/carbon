@@ -73,43 +73,107 @@ function CopyButton({ text, mint }: { text: string; mint: string }) {
   );
 }
 
-function SignalIcon({ signalType }: { signalType: string | null }) {
-  if (!signalType) {
-    return <Minus className="w-3.5 h-3.5 text-gray-600" />;
+interface PersistenceScoreProps {
+  summary: import('@/lib/types').TokenSignalSummary | null;
+  signal: import('@/lib/types').TokenSignal | null;
+  metrics: {
+    netFlow3600s: number;
+    dcaBuys3600s: number;
+    maxUniqueWallets: number;
+  };
+}
+
+function PersistenceScoreDisplay({ summary, signal, metrics }: PersistenceScoreProps) {
+  if (!summary) {
+    return <span className="text-gray-600 text-xs">—</span>;
   }
 
-  let Icon = Minus;
-  let label = signalType;
+  const { persistenceScore, patternTag, confidence, appearance24h, appearance72h, updatedAt } = summary;
 
-  switch (signalType.toUpperCase()) {
-    case 'BREAKOUT':
-      Icon = TrendingUp;
-      break;
-    case 'FOCUSED':
-      Icon = Target;
-      break;
-    case 'SURGE':
-      Icon = Zap;
-      break;
-    case 'BOT_DROPOFF':
-      Icon = AlertTriangle;
-      break;
-  }
+  // Color based on score
+  const scoreColor =
+    persistenceScore >= 7
+      ? 'text-green-400'
+      : persistenceScore >= 4
+      ? 'text-yellow-400'
+      : 'text-gray-400';
+
+  // Pattern tag badge color
+  const patternColor = {
+    ACCUMULATION: 'text-green-400',
+    MOMENTUM: 'text-blue-400',
+    DISTRIBUTION: 'text-red-400',
+    WASHOUT: 'text-orange-400',
+    NOISE: 'text-gray-500',
+  }[patternTag || 'NOISE'] || 'text-gray-500';
+
+  // Format updated timestamp
+  const now = Math.floor(Date.now() / 1000);
+  const diff = now - updatedAt;
+  const timeAgo =
+    diff < 60
+      ? `${diff}s ago`
+      : diff < 3600
+      ? `${Math.floor(diff / 60)}m ago`
+      : `${Math.floor(diff / 3600)}h ago`;
 
   return (
     <Tooltip.Provider delayDuration={200}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <button className="text-blue-400 hover:text-blue-300 transition-colors">
-            <Icon className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-1 cursor-help">
+            <span className={`font-semibold ${scoreColor}`}>{persistenceScore}/10</span>
+            <span className="text-gray-600">·</span>
+            <span className={`text-xs ${patternColor}`}>{patternTag || 'NOISE'}</span>
+            <span className="text-gray-600">·</span>
+            <span className="text-xs text-gray-400">{confidence || 'LOW'}</span>
+          </div>
         </Tooltip.Trigger>
         <Tooltip.Portal>
           <Tooltip.Content
-            className="bg-gray-900 text-gray-100 px-2.5 py-1 rounded text-xs shadow-lg border border-gray-700"
+            className="bg-gray-900 text-gray-100 p-3 rounded text-xs shadow-lg border border-gray-700 max-w-xs"
             sideOffset={5}
           >
-            {label}
+            <div className="space-y-1.5">
+              <div className="font-semibold border-b border-gray-700 pb-1">
+                Persistence Analysis
+              </div>
+              
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                <div>
+                  <span className="text-gray-400">Appearances:</span>
+                  <div className="text-gray-200">24h: {appearance24h} · 72h: {appearance72h}</div>
+                </div>
+                
+                <div>
+                  <span className="text-gray-400">Wallets:</span>
+                  <div className="text-gray-200">{metrics.maxUniqueWallets} unique</div>
+                </div>
+                
+                <div>
+                  <span className="text-gray-400">Net Flow (1h):</span>
+                  <div className={metrics.netFlow3600s > 0 ? 'text-green-400' : 'text-red-400'}>
+                    {metrics.netFlow3600s.toFixed(2)} ◎
+                  </div>
+                </div>
+                
+                <div>
+                  <span className="text-gray-400">DCA Buys (1h):</span>
+                  <div className="text-gray-200">{metrics.dcaBuys3600s}</div>
+                </div>
+              </div>
+              
+              {signal && (
+                <div className="pt-1 border-t border-gray-700">
+                  <span className="text-gray-400">Micro Signal:</span>
+                  <span className="ml-1 text-blue-400">{signal.signalType}</span>
+                </div>
+              )}
+              
+              <div className="text-gray-500 text-[10px] pt-1">
+                Updated {timeAgo}
+              </div>
+            </div>
             <Tooltip.Arrow className="fill-gray-700" />
           </Tooltip.Content>
         </Tooltip.Portal>
@@ -125,7 +189,7 @@ export default function TokenDashboard({
   const [sortField, setSortField] = useState<SortField>('netFlow900s');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
-  const { tokens, metadata, signals } = dashboardData;
+  const { tokens, metadata, signals, signalSummaries } = dashboardData;
 
   const sortedTokens = useMemo(() => {
     const sorted = [...tokens].sort((a, b) => {
@@ -265,8 +329,8 @@ export default function TokenDashboard({
                 DCA (1h) <SortIcon field="dcaBuys3600s" />
               </div>
             </th>
-            <th className="text-center px-2 py-3 text-xs font-semibold text-gray-400">
-              Signal
+            <th className="text-center px-3 py-3 text-xs font-semibold text-gray-400">
+              Persistence Score
             </th>
             <th
               className="text-right px-2 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
@@ -457,9 +521,17 @@ export default function TokenDashboard({
                   )}
                 </td>
 
-                {/* Signal */}
-                <td className="px-2 py-3 text-center">
-                  <SignalIcon signalType={signals[token.mint]?.signalType || null} />
+                {/* Persistence Score */}
+                <td className="px-3 py-3 text-center">
+                  <PersistenceScoreDisplay 
+                    summary={signalSummaries[token.mint] || null}
+                    signal={signals[token.mint] || null}
+                    metrics={{
+                      netFlow3600s: token.netFlow3600s,
+                      dcaBuys3600s: token.dcaBuys3600s,
+                      maxUniqueWallets: token.maxUniqueWallets,
+                    }}
+                  />
                 </td>
 
                 {/* Wallets */}

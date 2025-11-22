@@ -5,7 +5,8 @@ import {
   TokenMetadata, 
   TokenSignal, 
   SparklineDataPoint, 
-  DcaSparklineDataPoint 
+  DcaSparklineDataPoint,
+  TokenSignalSummary 
 } from '@/lib/types';
 
 /**
@@ -26,6 +27,7 @@ interface DashboardResponse {
   tokens: TokenMetrics[];
   metadata: Record<string, TokenMetadata>;
   signals: Record<string, TokenSignal | null>;
+  signalSummaries: Record<string, TokenSignalSummary | null>;
   sparklines: Record<string, SparklineDataPoint[]>;
   dcaSparklines: Record<string, DcaSparklineDataPoint[]>;
   counts: {
@@ -331,11 +333,67 @@ export async function GET() {
       });
     }
     
-    // 6. Build response (blocked/followed tokens already fetched earlier)
+    // 6. Get signal summaries for all tokens (Phase 3)
+    const signalSummaries: Record<string, TokenSignalSummary | null> = {};
+    if (allMints.length > 0 && tableExists(db, 'token_signal_summary')) {
+      const summariesQuery = `
+        SELECT 
+          token_address,
+          persistence_score,
+          pattern_tag,
+          confidence,
+          appearance_24h,
+          appearance_72h,
+          updated_at
+        FROM token_signal_summary
+        WHERE token_address IN (${allMints.map(() => '?').join(',')})
+      `;
+      
+      try {
+        const summaryRows = db.prepare(summariesQuery).all(...allMints) as Array<{
+          token_address: string;
+          persistence_score: number;
+          pattern_tag: string | null;
+          confidence: string | null;
+          appearance_24h: number;
+          appearance_72h: number;
+          updated_at: number;
+        }>;
+        
+        summaryRows.forEach(row => {
+          signalSummaries[row.token_address] = {
+            tokenAddress: row.token_address,
+            persistenceScore: row.persistence_score,
+            patternTag: row.pattern_tag,
+            confidence: row.confidence,
+            appearance24h: row.appearance_24h,
+            appearance72h: row.appearance_72h,
+            updatedAt: row.updated_at,
+          };
+        });
+      } catch (error) {
+        console.error('Error fetching signal summaries:', error);
+      }
+      
+      // Set null for mints without summaries
+      allMints.forEach(mint => {
+        if (!signalSummaries[mint]) {
+          signalSummaries[mint] = null;
+        }
+      });
+    } else {
+      // Table doesn't exist - set null for all mints
+      allMints.forEach(mint => {
+        signalSummaries[mint] = null;
+      });
+    }
+    
+    // 7. Build response (blocked/followed tokens already fetched earlier)
     const response: DashboardResponse = {
       tokens,
       metadata,
       signals,
+      signalSummaries,
       sparklines,
       dcaSparklines,
       counts: {

@@ -3,7 +3,8 @@ import {
   TokenMetadata, 
   TokenSignal, 
   SparklineDataPoint, 
-  DcaSparklineDataPoint 
+  DcaSparklineDataPoint,
+  TokenSignalSummary 
 } from './types';
 
 /**
@@ -13,6 +14,7 @@ export interface DashboardData {
   tokens: TokenMetrics[];
   metadata: Record<string, TokenMetadata>;
   signals: Record<string, TokenSignal | null>;
+  signalSummaries: Record<string, TokenSignalSummary | null>;
   sparklines: Record<string, SparklineDataPoint[]>;
   dcaSparklines: Record<string, DcaSparklineDataPoint[]>;
   counts: {

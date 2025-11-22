@@ -3,10 +3,11 @@ import { getTokenSignalSummary } from '@/lib/queries';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { mint: string } }
+  { params }: { params: Promise<{ mint: string }> }
 ) {
   try {
-    const result = getTokenSignalSummary(params.mint);
+    const { mint } = await params;
+    const result = getTokenSignalSummary(mint);
     
     return NextResponse.json({
       summary: result?.summary || null,

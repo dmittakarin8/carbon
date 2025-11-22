@@ -346,6 +346,7 @@ export function getBlockedTokens(): TokenMetrics[] {
 export function getFollowedTokens(): TokenMetrics[] {
   const db = getDb();
   
+  // Phase 3: Sort by persistence_score DESC (highest first)
   const query = `
     SELECT
       ta.mint,
@@ -353,8 +354,9 @@ export function getFollowedTokens(): TokenMetrics[] {
       ta.updated_at
     FROM token_aggregates ta
     INNER JOIN token_metadata tm ON ta.mint = tm.mint
+    LEFT JOIN token_signal_summary tss ON ta.mint = tss.token_address
     WHERE tm.follow_price = 1
-    ORDER BY ta.updated_at DESC
+    ORDER BY COALESCE(tss.persistence_score, 0) DESC, ta.updated_at DESC
     LIMIT 50
   `;
   

@@ -105,6 +105,7 @@ export default function FollowedTokensModal({
               <div className="space-y-1">
                 {followedTokens.map(mint => {
                   const meta = dashboardData.metadata[mint];
+                  const summary = dashboardData.signalSummaries[mint];
                   const hasMetadata = meta && (meta.name || meta.symbol);
                   
                   return (
@@ -169,14 +170,34 @@ export default function FollowedTokensModal({
                         )}
                       </div>
                       
-                      {/* Last Updated */}
-                      <div className="text-right min-w-[65px]">
-                        {meta?.updatedAt ? (
-                          <div className="text-gray-400 text-xs leading-tight">
-                            {formatTimeAgo(meta.updatedAt)}
-                          </div>
+                      {/* Persistence Score */}
+                      <div className="text-center min-w-[90px]">
+                        {summary ? (
+                          <>
+                            <div className="text-sm font-medium leading-tight">
+                              <span className={
+                                summary.persistenceScore >= 7 ? 'text-green-400' :
+                                summary.persistenceScore >= 4 ? 'text-yellow-400' :
+                                'text-gray-400'
+                              }>
+                                {summary.persistenceScore}/10
+                              </span>
+                              <span className="text-gray-600 mx-1">·</span>
+                              <span className={
+                                summary.patternTag === 'ACCUMULATION' ? 'text-green-400' :
+                                summary.patternTag === 'MOMENTUM' ? 'text-blue-400' :
+                                summary.patternTag === 'DISTRIBUTION' ? 'text-red-400' :
+                                'text-gray-500'
+                              }>
+                                {summary.patternTag || 'NOISE'}
+                              </span>
+                            </div>
+                            <div className="text-gray-500 text-xs leading-tight">
+                              {formatTimeAgo(summary.updatedAt)}
+                            </div>
+                          </>
                         ) : (
-                          <div className="text-gray-600 text-xs">—</div>
+                          <div className="text-gray-600 text-xs">No score</div>
                         )}
                       </div>
                       

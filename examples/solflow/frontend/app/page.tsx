@@ -56,13 +56,13 @@ export default function Home() {
             <FollowedTokensModal 
               followedCount={dashboardData?.counts.followed ?? 0} 
               onCountChange={fetchDashboard}
-              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
+              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, signalSummaries: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
               followedTokens={dashboardData?.followedTokens ?? []}
             />
             <BlockedTokensModal 
               blockedCount={dashboardData?.counts.blocked ?? 0} 
               onCountChange={fetchDashboard}
-              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
+              dashboardData={dashboardData ?? { tokens: [], metadata: {}, signals: {}, signalSummaries: {}, sparklines: {}, dcaSparklines: {}, counts: { followed: 0, blocked: 0 }, followedTokens: [], blockedTokens: [] }}
               blockedTokens={dashboardData?.blockedTokens ?? []}
             />
           </div>
