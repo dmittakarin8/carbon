@@ -78,7 +78,3 @@ export interface TokenSignalSummary {
   updatedAt: number;             // Unix timestamp
 }
 
-export interface SignalSummaryResponse {
-  summary: TokenSignalSummary | null;
-}
-
