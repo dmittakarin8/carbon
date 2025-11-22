@@ -407,3 +407,159 @@ export function getBlockedCount(): number {
   return result.count;
 }
 
+// ============================================================================
+// TOKEN SIGNAL SUMMARY (Phase 1: Persistent Signal Engine)
+// ============================================================================
+
+export function getTokenSignalSummary(tokenAddress: string): TokenMetadata & { summary: import('./types').TokenSignalSummary | null } | null {
+  const db = getDb();
+  
+  // Check if table exists
+  if (!tableExists(db, 'token_signal_summary')) {
+    console.warn('token_signal_summary table does not exist yet');
+    const metadata = getTokenMetadata(tokenAddress);
+    return metadata ? { ...metadata, summary: null } : null;
+  }
+  
+  const query = `
+    SELECT 
+      token_address,
+      persistence_score,
+      pattern_tag,
+      confidence,
+      appearance_24h,
+      appearance_72h,
+      updated_at
+    FROM token_signal_summary
+    WHERE token_address = ?
+  `;
+  
+  const stmt = db.prepare(query);
+  const row = stmt.get(tokenAddress) as {
+    token_address: string;
+    persistence_score: number;
+    pattern_tag: string | null;
+    confidence: string | null;
+    appearance_24h: number;
+    appearance_72h: number;
+    updated_at: number;
+  } | undefined;
+  
+  const metadata = getTokenMetadata(tokenAddress);
+  
+  if (!row) {
+    return metadata ? { ...metadata, summary: null } : null;
+  }
+  
+  return {
+    ...(metadata || {
+      mint: tokenAddress,
+      followPrice: false,
+      blocked: false,
+      updatedAt: 0,
+    }),
+    summary: {
+      tokenAddress: row.token_address,
+      persistenceScore: row.persistence_score,
+      patternTag: row.pattern_tag,
+      confidence: row.confidence,
+      appearance24h: row.appearance_24h,
+      appearance72h: row.appearance_72h,
+      updatedAt: row.updated_at,
+    },
+  };
+}
+
+export function upsertTokenSignalSummary(summary: {
+  tokenAddress: string;
+  persistenceScore: number;
+  patternTag: string | null;
+  confidence: string | null;
+  appearance24h: number;
+  appearance72h: number;
+}): void {
+  const writeDb = getWriteDb();
+  
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    
+    const query = `
+      INSERT INTO token_signal_summary (
+        token_address,
+        persistence_score,
+        pattern_tag,
+        confidence,
+        appearance_24h,
+        appearance_72h,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token_address) DO UPDATE SET
+        persistence_score = excluded.persistence_score,
+        pattern_tag = excluded.pattern_tag,
+        confidence = excluded.confidence,
+        appearance_24h = excluded.appearance_24h,
+        appearance_72h = excluded.appearance_72h,
+        updated_at = excluded.updated_at
+    `;
+    
+    const stmt = writeDb.prepare(query);
+    stmt.run(
+      summary.tokenAddress,
+      summary.persistenceScore,
+      summary.patternTag,
+      summary.confidence,
+      summary.appearance24h,
+      summary.appearance72h,
+      now
+    );
+  } finally {
+    writeDb.close();
+  }
+}
+
+export function getAllTokenSignalSummaries(limit: number = 50): Array<import('./types').TokenSignalSummary> {
+  const db = getDb();
+  
+  // Check if table exists
+  if (!tableExists(db, 'token_signal_summary')) {
+    console.warn('token_signal_summary table does not exist yet');
+    return [];
+  }
+  
+  const query = `
+    SELECT 
+      token_address,
+      persistence_score,
+      pattern_tag,
+      confidence,
+      appearance_24h,
+      appearance_72h,
+      updated_at
+    FROM token_signal_summary
+    ORDER BY persistence_score DESC, updated_at DESC
+    LIMIT ?
+  `;
+  
+  const stmt = db.prepare(query);
+  const rows = stmt.all(limit) as Array<{
+    token_address: string;
+    persistence_score: number;
+    pattern_tag: string | null;
+    confidence: string | null;
+    appearance_24h: number;
+    appearance_72h: number;
+    updated_at: number;
+  }>;
+  
+  return rows.map(row => ({
+    tokenAddress: row.token_address,
+    persistenceScore: row.persistence_score,
+    patternTag: row.pattern_tag,
+    confidence: row.confidence,
+    appearance24h: row.appearance_24h,
+    appearance72h: row.appearance_72h,
+    updatedAt: row.updated_at,
+  }));
+}
+

@@ -68,3 +68,17 @@ export interface MetadataResponse {
   metadata: TokenMetadata | null;
 }
 
+export interface TokenSignalSummary {
+  tokenAddress: string;
+  persistenceScore: number;     // 0-10
+  patternTag: string | null;     // ACCUMULATION | MOMENTUM | DISTRIBUTION | WASHOUT | NOISE
+  confidence: string | null;     // LOW | MEDIUM | HIGH
+  appearance24h: number;         // Count in last 24h
+  appearance72h: number;         // Count in last 72h
+  updatedAt: number;             // Unix timestamp
+}
+
+export interface SignalSummaryResponse {
+  summary: TokenSignalSummary | null;
+}
+
