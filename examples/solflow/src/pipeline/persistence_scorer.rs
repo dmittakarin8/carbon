@@ -75,29 +75,31 @@ impl PersistenceScorer {
         Self { db_path }
     }
 
-    /// Fetch active tokens from database
+    /// Fetch active tokens from database (matches dashboard query for consistency)
     fn fetch_active_tokens(&self, conn: &Connection) -> SqliteResult<Vec<TokenSnapshot>> {
         let mut stmt = conn.prepare(
             r#"
             SELECT
-                mint,
-                net_flow_60s_sol,
-                net_flow_300s_sol,
-                net_flow_900s_sol,
-                net_flow_3600s_sol,
-                net_flow_7200s_sol,
-                net_flow_14400s_sol,
-                unique_wallets_300s,
-                bot_trades_300s,
-                buy_count_300s,
-                sell_count_300s,
-                dca_buys_3600s,
-                volume_300s_sol,
-                updated_at,
-                created_at
-            FROM token_aggregates
-            WHERE updated_at > unixepoch() - 14400
-            ORDER BY net_flow_300s_sol DESC
+                ta.mint,
+                ta.net_flow_60s_sol,
+                ta.net_flow_300s_sol,
+                ta.net_flow_900s_sol,
+                ta.net_flow_3600s_sol,
+                ta.net_flow_7200s_sol,
+                ta.net_flow_14400s_sol,
+                ta.unique_wallets_300s,
+                ta.bot_trades_300s,
+                ta.buy_count_300s,
+                ta.sell_count_300s,
+                ta.dca_buys_3600s,
+                ta.volume_300s_sol,
+                ta.updated_at,
+                ta.created_at
+            FROM token_aggregates ta
+            LEFT JOIN token_metadata tm ON ta.mint = tm.mint
+            WHERE ta.dca_buys_3600s > 0
+              AND (tm.blocked IS NULL OR tm.blocked = 0)
+            ORDER BY ta.net_flow_300s_sol DESC
             LIMIT 100
             "#,
         )?;
