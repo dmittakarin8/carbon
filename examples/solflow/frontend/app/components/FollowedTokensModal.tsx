@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { DashboardData } from '@/lib/dashboard-client';
 import { Star, X } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 
 interface FollowedTokensModalProps {
   followedCount: number;
@@ -171,33 +172,44 @@ export default function FollowedTokensModal({
                       </div>
                       
                       {/* Persistence Score */}
-                      <div className="text-center min-w-[90px]">
+                      <div className="min-w-[225px]">
                         {summary ? (
                           <>
-                            <div className="text-sm font-medium leading-tight">
-                              <span className={
-                                summary.persistenceScore >= 7 ? 'text-green-400' :
-                                summary.persistenceScore >= 4 ? 'text-yellow-400' :
-                                'text-gray-400'
-                              }>
-                                {summary.persistenceScore}/10
-                              </span>
-                              <span className="text-gray-600 mx-1">·</span>
-                              <span className={
-                                summary.patternTag === 'ACCUMULATION' ? 'text-green-400' :
-                                summary.patternTag === 'MOMENTUM' ? 'text-blue-400' :
-                                summary.patternTag === 'DISTRIBUTION' ? 'text-red-400' :
-                                'text-gray-500'
-                              }>
-                                {summary.patternTag || 'NOISE'}
-                              </span>
+                            <div className="inline-block bg-gray-700/30 rounded-md px-2 py-1.5">
+                              <div className="grid grid-cols-[50px_110px_65px] gap-0 items-center text-sm font-medium leading-tight">
+                                <span className={`text-center ${
+                                  summary.persistenceScore >= 7 ? 'text-green-400' :
+                                  summary.persistenceScore >= 4 ? 'text-yellow-400' :
+                                  'text-gray-400'
+                                }`}>
+                                  {summary.persistenceScore}/10
+                                </span>
+                                <div className="flex justify-center">
+                                  <Badge variant={
+                                    summary.patternTag === 'ACCUMULATION' ? 'success' :
+                                    summary.patternTag === 'MOMENTUM' ? 'info' :
+                                    summary.patternTag === 'DISTRIBUTION' ? 'danger' :
+                                    summary.patternTag === 'WASHOUT' ? 'warning' :
+                                    'neutral'
+                                  }>
+                                    {summary.patternTag || 'NOISE'}
+                                  </Badge>
+                                </div>
+                                <div className="flex justify-center">
+                                  <Badge variant={
+                                    summary.confidence === 'HIGH' ? 'default' : 'neutral'
+                                  } className="text-[9px]">
+                                    {summary.confidence || 'LOW'}
+                                  </Badge>
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-gray-500 text-xs leading-tight">
+                            <div className="text-gray-500 text-xs leading-tight mt-1 text-center">
                               {formatTimeAgo(summary.updatedAt)}
                             </div>
                           </>
                         ) : (
-                          <div className="text-gray-600 text-xs">No score</div>
+                          <div className="text-gray-600 text-xs text-center">No score</div>
                         )}
                       </div>
                       

@@ -5,6 +5,7 @@ import { DashboardData } from '@/lib/dashboard-client';
 import DcaSparkline from './DcaSparkline';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { TrendingUp, Target, Zap, AlertTriangle, Minus, Star, RefreshCw, Download, Ban, Copy, Check } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 
 type SortField =
   | 'netFlow900s'
@@ -98,14 +99,20 @@ function PersistenceScoreDisplay({ summary, signal, metrics }: PersistenceScoreP
       ? 'text-yellow-400'
       : 'text-gray-400';
 
-  // Pattern tag badge color
-  const patternColor = {
-    ACCUMULATION: 'text-green-400',
-    MOMENTUM: 'text-blue-400',
-    DISTRIBUTION: 'text-red-400',
-    WASHOUT: 'text-orange-400',
-    NOISE: 'text-gray-500',
-  }[patternTag || 'NOISE'] || 'text-gray-500';
+  // Pattern tag badge variant
+  const patternVariant = {
+    ACCUMULATION: 'success',
+    MOMENTUM: 'info',
+    DISTRIBUTION: 'danger',
+    WASHOUT: 'warning',
+    NOISE: 'neutral',
+  }[patternTag || 'NOISE'] as 'success' | 'info' | 'danger' | 'warning' | 'neutral' || 'neutral';
+
+  // Confidence badge variant
+  const confidenceVariant = 
+    confidence === 'HIGH' ? 'default' : 
+    confidence === 'MEDIUM' ? 'neutral' : 
+    'neutral';
 
   // Format updated timestamp
   const now = Math.floor(Date.now() / 1000);
@@ -121,12 +128,16 @@ function PersistenceScoreDisplay({ summary, signal, metrics }: PersistenceScoreP
     <Tooltip.Provider delayDuration={200}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <div className="flex items-center gap-1 cursor-help">
-            <span className={`font-semibold ${scoreColor}`}>{persistenceScore}/10</span>
-            <span className="text-gray-600">·</span>
-            <span className={`text-xs ${patternColor}`}>{patternTag || 'NOISE'}</span>
-            <span className="text-gray-600">·</span>
-            <span className="text-xs text-gray-400">{confidence || 'LOW'}</span>
+          <div className="inline-block bg-gray-800/40 rounded-md px-2 py-1.5 cursor-help">
+            <div className="grid grid-cols-[50px_110px_65px] gap-0 items-center">
+              <span className={`font-semibold ${scoreColor} text-xs text-center`}>{persistenceScore}/10</span>
+              <div className="flex justify-center">
+                <Badge variant={patternVariant}>{patternTag || 'NOISE'}</Badge>
+              </div>
+              <div className="flex justify-center">
+                <Badge variant={confidenceVariant} className="text-[9px]">{confidence || 'LOW'}</Badge>
+              </div>
+            </div>
           </div>
         </Tooltip.Trigger>
         <Tooltip.Portal>
