@@ -74,7 +74,7 @@ function CopyButton({ text, mint }: { text: string; mint: string }) {
   );
 }
 
-interface PersistenceScoreProps {
+interface SignalScoreProps {
   summary: import('@/lib/types').TokenSignalSummary | null;
   signal: import('@/lib/types').TokenSignal | null;
   metrics: {
@@ -84,7 +84,7 @@ interface PersistenceScoreProps {
   };
 }
 
-function PersistenceScoreDisplay({ summary, signal, metrics }: PersistenceScoreProps) {
+function SignalScoreDisplay({ summary, signal, metrics }: SignalScoreProps) {
   if (!summary) {
     return <span className="text-gray-600 text-xs">—</span>;
   }
@@ -147,7 +147,7 @@ function PersistenceScoreDisplay({ summary, signal, metrics }: PersistenceScoreP
           >
             <div className="space-y-1.5">
               <div className="font-semibold border-b border-gray-700 pb-1">
-                Persistence Analysis
+                Signal Analysis
               </div>
               
               <div className="grid grid-cols-2 gap-x-3 gap-y-1">
@@ -341,7 +341,7 @@ export default function TokenDashboard({
               </div>
             </th>
             <th className="text-center px-3 py-3 text-xs font-semibold text-gray-400">
-              Persistence Score
+              Signal
             </th>
             <th
               className="text-right px-2 py-3 text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-300"
@@ -532,9 +532,9 @@ export default function TokenDashboard({
                   )}
                 </td>
 
-                {/* Persistence Score */}
+                {/* Signal Score */}
                 <td className="px-3 py-3 text-center">
-                  <PersistenceScoreDisplay 
+                  <SignalScoreDisplay 
                     summary={signalSummaries[token.mint] || null}
                     signal={signals[token.mint] || null}
                     metrics={{

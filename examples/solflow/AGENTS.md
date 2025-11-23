@@ -790,6 +790,184 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 
 ---
 
+## 🚫 GRPC-Level Token Blocking Architecture
+
+**Phase 11:** Token blocking has been moved from UI-level filtering to the earliest point in the pipeline: the GRPC stream ingestion layer.
+
+### Architecture Overview
+
+**Data Flow:**
+```
+Yellowstone gRPC Stream
+    ↓
+GRPC Ingestion Layer (TradeProcessor)
+    ↓
+BlocklistChecker.is_blocked(mint)?
+    ├─ YES → Discard trade immediately (no processing)
+    └─ NO  → Continue to aggregation/metrics/DB
+    ↓
+PipelineEngine (aggregation, metrics)
+    ↓
+Database (token_aggregates, token_signals)
+    ↓
+UI (frontend dashboard)
+```
+
+### Blocklist Storage
+
+**Primary Table:** `mint_blocklist` (SQLite)
+
+Schema (from `/sql/01_mint_blocklist.sql`):
+```sql
+CREATE TABLE mint_blocklist (
+    mint            TEXT PRIMARY KEY,
+    reason          TEXT,
+    blocked_by      TEXT,
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER
+);
+```
+
+**Fields:**
+- `mint` - Token mint address (primary key)
+- `reason` - Human-readable reason for blocking
+- `blocked_by` - User/system that added the block
+- `created_at` - Unix timestamp when blocked
+- `expires_at` - NULL (permanent) or future timestamp (temporary)
+
+### Blocklist Checking
+
+**Implementation:** `src/streamer_core/blocklist_checker.rs`
+
+**Query Logic:**
+```sql
+SELECT mint FROM mint_blocklist 
+WHERE mint = ? AND (expires_at IS NULL OR expires_at > ?)
+```
+
+**Behavior:**
+- If row exists: Token is blocked → discard trade
+- If no row: Token is allowed → process trade
+- If query fails: Fail-open (allow trade, log warning)
+
+### Integration Points
+
+**1. GRPC Ingestion Layer** (`src/streamer_core/lib.rs`)
+- BlocklistChecker initialized at startup
+- Checked BEFORE any processing (earliest possible point)
+- Blocked trades never reach aggregation/metrics/DB/signals
+
+**2. UI Layer** (`frontend/lib/queries.ts`)
+- `blockToken()` - Writes to `mint_blocklist` table
+- `unblockToken()` - Removes from `mint_blocklist` table
+- `getTokens()` - Defense-in-depth filter (checks `mint_blocklist`)
+
+**3. Database Layer**
+- No foreign key constraints (allows hot-reloading)
+- Indexed on `created_at` for efficient queries
+- Supports both permanent (NULL) and temporary (timestamp) blocks
+
+### Hot Reload Support
+
+**No restart required:**
+- BlocklistChecker queries database on every trade check
+- Updates to `mint_blocklist` are reflected immediately
+- New blocks take effect within ~1 second (next trade)
+
+### Usage
+
+**Block a token:**
+```typescript
+// Frontend (TypeScript)
+blockToken("mint_address", "reason: spam");
+
+// Result:
+// 1. Row added to mint_blocklist table
+// 2. All future trades for this mint discarded at GRPC layer
+// 3. No aggregates/signals generated
+// 4. Token disappears from UI within ~10s (next refresh)
+```
+
+**Unblock a token:**
+```typescript
+// Frontend (TypeScript)
+unblockToken("mint_address");
+
+// Result:
+// 1. Row removed from mint_blocklist table
+// 2. Future trades for this mint processed normally
+// 3. Aggregates/signals resume generation
+// 4. Token reappears in UI if active
+```
+
+**Temporary block (expires after 1 hour):**
+```sql
+-- Direct SQL (for automation/scripts)
+INSERT INTO mint_blocklist (mint, reason, blocked_by, created_at, expires_at)
+VALUES ('mint_address', 'temporary ban', 'script', unixepoch(), unixepoch() + 3600);
+```
+
+### Environment Configuration
+
+**Required for blocklist functionality:**
+```bash
+SOLFLOW_DB_PATH=/var/lib/solflow/solflow.db
+```
+
+If `SOLFLOW_DB_PATH` is not set:
+- BlocklistChecker is disabled
+- All trades are processed (no filtering)
+- Log warning emitted at startup
+
+### Verification
+
+**Check if token is blocked:**
+```bash
+sqlite3 /var/lib/solflow/solflow.db "
+  SELECT mint, reason, blocked_by, created_at, expires_at 
+  FROM mint_blocklist 
+  WHERE mint = 'YOUR_MINT_ADDRESS'
+"
+```
+
+**List all blocked tokens:**
+```bash
+sqlite3 /var/lib/solflow/solflow.db "
+  SELECT mint, reason, blocked_by, 
+         datetime(created_at, 'unixepoch') as blocked_at,
+         CASE 
+           WHEN expires_at IS NULL THEN 'permanent' 
+           ELSE datetime(expires_at, 'unixepoch') 
+         END as expires
+  FROM mint_blocklist 
+  ORDER BY created_at DESC
+"
+```
+
+**Check GRPC logs for blocked trades:**
+```bash
+# Look for debug messages (requires RUST_LOG=debug)
+tail -f /path/to/logs | grep "🚫 Blocked token detected"
+```
+
+### Benefits
+
+✅ **Earliest-possible filtering** - Blocked trades never enter the system  
+✅ **Zero overhead** - No wasted CPU/memory on blocked tokens  
+✅ **Immediate effect** - No restart required, hot-reload supported  
+✅ **Defense-in-depth** - Checked at GRPC layer AND UI layer  
+✅ **Flexible expiration** - Supports both permanent and temporary blocks  
+✅ **Fail-open** - Database errors don't block legitimate trades  
+✅ **Audit trail** - All blocks logged with reason, timestamp, and user  
+
+### Legacy Note
+
+**Phase 10 and earlier:** Blocklist was stored in `token_metadata.blocked` column and filtered at UI layer only. This meant blocked trades still consumed pipeline resources.
+
+**Phase 11:** Blocklist moved to dedicated `mint_blocklist` table and checked at GRPC layer. Blocked trades are discarded before any processing.
+
+---
+
 ## 🔐 Secrets & Environment
 
 ### Required Variables (.env)
@@ -797,6 +975,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 GEYSER_URL=https://basic.grpc.solanavibestation.com  # gRPC endpoint
 RPC_URL=https://public.rpc.solanavibestation.com     # Solana RPC
 X_TOKEN=<your_geyser_token>                          # Authentication
+SOLFLOW_DB_PATH=/var/lib/solflow/solflow.db         # SQLite database path (required for blocklist)
 ```
 
 ### Optional Variables

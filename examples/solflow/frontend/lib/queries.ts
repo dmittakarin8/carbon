@@ -16,8 +16,11 @@ function tableExists(db: ReturnType<typeof getDb>, tableName: string): boolean {
 export function getTokens(limit: number = 100): TokenMetrics[] {
   const db = getDb();
   
-  // Phase 6: DCA Rolling Windows - query dca_buys_* columns directly from token_aggregates
-  // Phase 7: Exclude blocked tokens via LEFT JOIN with token_metadata
+  // Phase 11: GRPC-Level Token Blocking
+  // Exclude blocked tokens via LEFT JOIN with mint_blocklist table
+  // Note: Tokens blocked at GRPC layer won't appear in token_aggregates,
+  // but this query provides defense-in-depth for tokens blocked after ingestion
+  const now = Math.floor(Date.now() / 1000);
   const query = `
     SELECT
       ta.mint,
@@ -36,15 +39,16 @@ export function getTokens(limit: number = 100): TokenMetrics[] {
       ta.dca_buys_14400s,
       ta.updated_at
     FROM token_aggregates ta
-    LEFT JOIN token_metadata tm ON ta.mint = tm.mint
+    LEFT JOIN mint_blocklist mb ON ta.mint = mb.mint 
+      AND (mb.expires_at IS NULL OR mb.expires_at > ?)
     WHERE ta.dca_buys_3600s > 0
-      AND (tm.blocked IS NULL OR tm.blocked = 0)
+      AND mb.mint IS NULL
     ORDER BY ta.net_flow_300s_sol DESC
     LIMIT 40
   `;
   
   const stmt = db.prepare(query);
-  const rows = stmt.all() as Array<{
+  const rows = stmt.all(now) as Array<{
     mint: string;
     net_flow_60s_sol: number | null;
     net_flow_300s_sol: number | null;
@@ -129,13 +133,24 @@ export function blockToken(mint: string, reason: string = 'Blocked via web UI'):
   
   try {
     const now = Math.floor(Date.now() / 1000);
-    const query = `
+    
+    // Write to mint_blocklist table (backend-controlled blocklist)
+    // This will be checked at GRPC ingestion layer by BlocklistChecker
+    const blocklistQuery = `
       INSERT OR REPLACE INTO mint_blocklist (mint, reason, blocked_by, created_at, expires_at)
       VALUES (?, ?, 'web-ui', ?, NULL)
     `;
+    writeDb.prepare(blocklistQuery).run(mint, reason, now);
     
-    const stmt = writeDb.prepare(query);
-    stmt.run(mint, reason, now);
+    // Also mark in token_metadata for UI filtering (legacy support)
+    const metadataQuery = `
+      INSERT INTO token_metadata (mint, blocked, updated_at, created_at, decimals, follow_price)
+      VALUES (?, 1, ?, ?, 0, 0)
+      ON CONFLICT(mint) DO UPDATE SET
+        blocked = 1,
+        updated_at = excluded.updated_at
+    `;
+    writeDb.prepare(metadataQuery).run(mint, now, now);
   } finally {
     writeDb.close();
   }
@@ -145,9 +160,17 @@ export function unblockToken(mint: string): void {
   const writeDb = getWriteDb();
   
   try {
-    const query = `DELETE FROM mint_blocklist WHERE mint = ?`;
-    const stmt = writeDb.prepare(query);
-    stmt.run(mint);
+    // Remove from mint_blocklist table (backend-controlled blocklist)
+    writeDb.prepare(`DELETE FROM mint_blocklist WHERE mint = ?`).run(mint);
+    
+    // Also update token_metadata for UI filtering (legacy support)
+    const now = Math.floor(Date.now() / 1000);
+    const metadataQuery = `
+      UPDATE token_metadata 
+      SET blocked = 0, updated_at = ?
+      WHERE mint = ?
+    `;
+    writeDb.prepare(metadataQuery).run(now, mint);
   } finally {
     writeDb.close();
   }

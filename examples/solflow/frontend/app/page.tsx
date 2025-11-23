@@ -6,7 +6,7 @@ import { useFollowedTokenRefresh } from '@/lib/use-followed-token-refresh';
 import TokenDashboard from './components/TokenDashboard';
 import BlockedTokensModal from './components/BlockedTokensModal';
 import FollowedTokensModal from './components/FollowedTokensModal';
-import PersistenceLegend from './components/PersistenceLegend';
+import SignalsLegend from './components/SignalsLegend';
 
 export default function Home() {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
@@ -54,7 +54,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <PersistenceLegend />
+            <SignalsLegend />
             <FollowedTokensModal 
               followedCount={dashboardData?.counts.followed ?? 0} 
               onCountChange={fetchDashboard}

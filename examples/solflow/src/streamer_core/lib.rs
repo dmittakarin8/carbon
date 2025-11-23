@@ -1,5 +1,6 @@
 use crate::streamer_core::{
     balance_extractor::{build_full_account_keys, extract_sol_changes, extract_token_changes},
+    blocklist_checker::BlocklistChecker,
     config::{BackendType, RuntimeConfig, StreamerConfig},
     grpc_client::run_with_reconnect,
     output_writer::{JsonlWriter, TradeEvent},
@@ -59,10 +60,12 @@ struct TradeProcessor {
     send_count: Arc<AtomicU64>,
     /// Flag to enable/disable JSONL writes (pipeline is always enabled)
     enable_jsonl: bool,
+    /// Blocklist checker for GRPC-level filtering
+    blocklist_checker: Option<BlocklistChecker>,
 }
 
 impl TradeProcessor {
-    fn new(config: StreamerConfig, writer: Box<dyn WriterBackend>, enable_jsonl: bool) -> Self {
+    fn new(config: StreamerConfig, writer: Box<dyn WriterBackend>, enable_jsonl: bool, blocklist_checker: Option<BlocklistChecker>) -> Self {
         let pipeline_tx = config.pipeline_tx.clone();
         Self {
             config,
@@ -70,6 +73,7 @@ impl TradeProcessor {
             pipeline_tx,
             send_count: Arc::new(AtomicU64::new(0)),
             enable_jsonl,
+            blocklist_checker,
         }
     }
 }
@@ -88,6 +92,27 @@ impl Processor for TradeProcessor {
         let token_deltas = extract_token_changes(&metadata.meta, &account_keys);
 
         if let Some(trade_info) = extract_trade_info(&sol_deltas, &token_deltas, &account_keys) {
+            // CRITICAL: Check blocklist BEFORE any processing
+            // This is the earliest point in the pipeline - if blocked, discard immediately
+            if let Some(ref checker) = self.blocklist_checker {
+                match checker.is_blocked(&trade_info.mint) {
+                    Ok(true) => {
+                        // Token is blocked - discard trade event immediately
+                        // No aggregation, no metrics, no DB writes, no WebSocket push
+                        log::debug!("🚫 Blocked token detected, discarding: {}", trade_info.mint);
+                        return Ok(());
+                    }
+                    Ok(false) => {
+                        // Token is allowed - continue processing
+                    }
+                    Err(e) => {
+                        // Blocklist check failed - log error but continue processing
+                        // (fail-open to avoid blocking legitimate trades on DB issues)
+                        log::warn!("⚠️  Blocklist check failed for {}: {}", trade_info.mint, e);
+                    }
+                }
+            }
+
             let discriminator = extract_discriminator_hex(&metadata);
 
             let event = TradeEvent {
@@ -179,6 +204,28 @@ pub async fn run(streamer_config: StreamerConfig) -> Result<(), Box<dyn std::err
     log::info!("   Geyser URL: {}", runtime_config.geyser_url);
     log::info!("   Commitment: {:?}", runtime_config.commitment_level);
 
+    // Initialize blocklist checker (GRPC-level filtering)
+    let blocklist_checker = match std::env::var("SOLFLOW_DB_PATH") {
+        Ok(db_path) => {
+            match BlocklistChecker::new(&db_path) {
+                Ok(checker) => {
+                    log::info!("✅ Blocklist checker initialized: {}", db_path);
+                    log::info!("   └─ Blocked tokens will be discarded at GRPC ingestion layer");
+                    Some(checker)
+                }
+                Err(e) => {
+                    log::warn!("⚠️  Blocklist checker disabled: {}", e);
+                    log::warn!("   └─ Set SOLFLOW_DB_PATH to enable GRPC-level token blocking");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            log::info!("ℹ️  Blocklist checker disabled (SOLFLOW_DB_PATH not set)");
+            None
+        }
+    };
+
     // Log JSONL status
     if runtime_config.enable_jsonl {
         log::info!("📝 JSONL writes: ENABLED");
@@ -201,7 +248,12 @@ pub async fn run(streamer_config: StreamerConfig) -> Result<(), Box<dyn std::err
     
     log::info!("📊 Backend: {}", writer.backend_type());
 
-    let processor = TradeProcessor::new(streamer_config.clone(), writer, runtime_config.enable_jsonl);
+    let processor = TradeProcessor::new(
+        streamer_config.clone(), 
+        writer, 
+        runtime_config.enable_jsonl,
+        blocklist_checker.clone()
+    );
 
     run_with_reconnect(&runtime_config, &streamer_config.program_id, move |client| {
         let proc = processor.clone();

@@ -1,4 +1,5 @@
 pub mod balance_extractor;
+pub mod blocklist_checker;
 pub mod config;
 pub mod error_handler;
 pub mod grpc_client;
@@ -9,6 +10,7 @@ pub mod sqlite_writer;
 
 mod lib;
 
+pub use blocklist_checker::BlocklistChecker;
 pub use config::{RuntimeConfig, StreamerConfig};
 pub use lib::run;
 pub use output_writer::TradeEvent;

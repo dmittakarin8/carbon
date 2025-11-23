@@ -5,7 +5,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Info, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
-export default function PersistenceLegend() {
+export default function SignalsLegend() {
   const [open, setOpen] = useState(false);
 
   return (
@@ -13,7 +13,7 @@ export default function PersistenceLegend() {
       <Dialog.Trigger asChild>
         <button className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors flex items-center gap-1.5">
           <Info className="w-4 h-4" />
-          Persistence Legend
+          Signals Legend
         </button>
       </Dialog.Trigger>
       <Dialog.Portal>
@@ -22,7 +22,7 @@ export default function PersistenceLegend() {
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
             <Dialog.Title className="text-base font-semibold text-white">
-              Persistence Scoring Legend
+              Signals Scoring Legend
             </Dialog.Title>
             <Dialog.Close asChild>
               <button className="text-gray-400 hover:text-gray-200 transition-colors">
