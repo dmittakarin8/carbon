@@ -32,6 +32,29 @@ function formatMint(mint: string): string {
   return `${mint.slice(0, 4)}...${mint.slice(-4)}`;
 }
 
+function formatTokenAge(pairCreatedAt: number | undefined): string {
+  if (!pairCreatedAt) return '—';
+  
+  // Convert timestamp to seconds if it's in milliseconds (>10 digits)
+  // DexScreener returns milliseconds, but we store seconds for consistency
+  const timestampSeconds = pairCreatedAt > 9999999999 
+    ? Math.floor(pairCreatedAt / 1000) 
+    : pairCreatedAt;
+  
+  const now = Math.floor(Date.now() / 1000);
+  const ageSeconds = now - timestampSeconds;
+  
+  // Convert to appropriate time bucket
+  const ageHours = ageSeconds / 3600;
+  const ageDays = ageHours / 24;
+  
+  if (ageHours < 1) return '<1h';
+  if (ageHours < 24) return '<24h';
+  if (ageDays < 7) return '1–7d';
+  if (ageDays < 30) return '7–30d';
+  return '>30d';
+}
+
 function CopyButton({ text, mint }: { text: string; mint: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -292,8 +315,8 @@ export default function TokenDashboard({
             <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400">
               Token
             </th>
-            <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400">
-              Price (USD)
+            <th className="text-center px-5 py-3 text-xs font-semibold text-gray-400">
+              Age
             </th>
             <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400">
               Market Cap
@@ -395,13 +418,9 @@ export default function TokenDashboard({
                   </div>
                 </td>
 
-                {/* Price Column */}
-                <td className="px-5 py-3 text-xs text-right">
-                  {meta?.priceUsd ? (
-                    <span className="text-gray-300">${meta.priceUsd.toFixed(6)}</span>
-                  ) : (
-                    <span className="text-gray-600">—</span>
-                  )}
+                {/* Age Column */}
+                <td className="px-5 py-3 text-xs text-center">
+                  <span className="text-gray-300">{formatTokenAge(meta?.pairCreatedAt)}</span>
                 </td>
 
                 {/* Market Cap Column */}

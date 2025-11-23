@@ -36,6 +36,8 @@ pub struct DexScreenerPair {
     pub price_usd: String,
     #[serde(rename = "marketCap")]
     pub market_cap: Option<f64>,
+    #[serde(rename = "pairCreatedAt")]
+    pub pair_created_at: Option<i64>,
     pub info: Option<PairInfo>,
 }
 
@@ -65,6 +67,7 @@ pub struct TokenMetadata {
     pub image_url: Option<String>,
     pub price_usd: f64,
     pub market_cap: Option<f64>,
+    pub pair_created_at: Option<i64>,
 }
 
 /// Fetch token metadata from DexScreener API
@@ -110,6 +113,8 @@ pub async fn fetch_token_metadata(mint: &str) -> Result<TokenMetadata, Box<dyn s
         image_url: pair.info.as_ref().and_then(|i| i.image_url.clone()),
         price_usd: pair.price_usd.parse().unwrap_or(0.0),
         market_cap: pair.market_cap,
+        // Convert pairCreatedAt from milliseconds to seconds for consistency with other timestamps
+        pair_created_at: pair.pair_created_at.map(|ms| ms / 1000),
     })
 }
 
@@ -140,14 +145,15 @@ pub fn upsert_metadata(
     conn.execute(
         r#"
         INSERT INTO token_metadata 
-            (mint, name, symbol, image_url, price_usd, market_cap, updated_at, created_at, decimals, blocked, follow_price)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, 0, 0, 0)
+            (mint, name, symbol, image_url, price_usd, market_cap, pair_created_at, updated_at, created_at, decimals, blocked, follow_price)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 0, 0, 0)
         ON CONFLICT(mint) DO UPDATE SET
             name = excluded.name,
             symbol = excluded.symbol,
             image_url = excluded.image_url,
             price_usd = excluded.price_usd,
             market_cap = excluded.market_cap,
+            pair_created_at = COALESCE(token_metadata.pair_created_at, excluded.pair_created_at),
             updated_at = excluded.updated_at
         "#,
         rusqlite::params![
@@ -157,6 +163,7 @@ pub fn upsert_metadata(
             metadata.image_url,
             metadata.price_usd,
             metadata.market_cap,
+            metadata.pair_created_at,
             now,
         ],
     )?;

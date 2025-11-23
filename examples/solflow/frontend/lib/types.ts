@@ -59,6 +59,7 @@ export interface TokenMetadata {
   priceUsd?: number;
   marketCap?: number;
   decimals?: number;
+  pairCreatedAt?: number;
   followPrice: boolean;
   blocked: boolean;
   updatedAt: number;

@@ -145,7 +145,7 @@ export async function GET() {
     if (allMints.length > 0) {
       const metadataQuery = `
         SELECT 
-          mint, name, symbol, image_url, price_usd, market_cap,
+          mint, name, symbol, image_url, price_usd, market_cap, pair_created_at,
           follow_price, blocked, updated_at
         FROM token_metadata
         WHERE mint IN (${allMints.map(() => '?').join(',')})
@@ -158,6 +158,7 @@ export async function GET() {
         image_url: string | null;
         price_usd: number | null;
         market_cap: number | null;
+        pair_created_at: number | null;
         follow_price: number;
         blocked: number;
         updated_at: number;
@@ -171,6 +172,7 @@ export async function GET() {
           imageUrl: row.image_url ?? undefined,
           priceUsd: row.price_usd ?? undefined,
           marketCap: row.market_cap ?? undefined,
+          pairCreatedAt: row.pair_created_at ?? undefined,
           followPrice: row.follow_price === 1,
           blocked: row.blocked === 1,
           updatedAt: row.updated_at,

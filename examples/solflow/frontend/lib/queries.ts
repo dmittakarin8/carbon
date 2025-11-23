@@ -244,7 +244,7 @@ export function getTokenMetadata(mint: string): TokenMetadata | null {
   
   const query = `
     SELECT 
-      mint, name, symbol, image_url, price_usd, market_cap,
+      mint, name, symbol, image_url, price_usd, market_cap, pair_created_at,
       follow_price, blocked, updated_at
     FROM token_metadata
     WHERE mint = ?
@@ -258,6 +258,7 @@ export function getTokenMetadata(mint: string): TokenMetadata | null {
     image_url: string | null;
     price_usd: number | null;
     market_cap: number | null;
+    pair_created_at: number | null;
     follow_price: number;
     blocked: number;
     updated_at: number;
@@ -272,6 +273,7 @@ export function getTokenMetadata(mint: string): TokenMetadata | null {
     imageUrl: row.image_url ?? undefined,
     priceUsd: row.price_usd ?? undefined,
     marketCap: row.market_cap ?? undefined,
+    pairCreatedAt: row.pair_created_at ?? undefined,
     followPrice: row.follow_price === 1,
     blocked: row.blocked === 1,
     updatedAt: row.updated_at,
