@@ -32,8 +32,8 @@ function formatMint(mint: string): string {
   return `${mint.slice(0, 4)}...${mint.slice(-4)}`;
 }
 
-function formatTokenAge(pairCreatedAt: number | undefined): string {
-  if (!pairCreatedAt) return '—';
+function getTokenAgeInfo(pairCreatedAt: number | undefined): { bucket: string; classification: string } | null {
+  if (!pairCreatedAt) return null;
   
   // Convert timestamp to seconds if it's in milliseconds (>10 digits)
   // DexScreener returns milliseconds, but we store seconds for consistency
@@ -48,11 +48,39 @@ function formatTokenAge(pairCreatedAt: number | undefined): string {
   const ageHours = ageSeconds / 3600;
   const ageDays = ageHours / 24;
   
-  if (ageHours < 1) return '<1h';
-  if (ageHours < 24) return '<24h';
-  if (ageDays < 7) return '1–7d';
-  if (ageDays < 30) return '7–30d';
-  return '>30d';
+  let bucket: string;
+  let classification: string;
+  
+  // Short-term buckets
+  if (ageHours < 1) {
+    bucket = '<1h';
+    classification = 'New';
+  } else if (ageHours < 24) {
+    bucket = '<24h';
+    classification = 'New';
+  } else if (ageDays < 7) {
+    bucket = '1–7d';
+    classification = 'Recent';
+  } else if (ageDays < 30) {
+    bucket = '7–30d';
+    classification = 'Recent';
+  } 
+  // Long-term buckets
+  else if (ageDays < 180) {
+    bucket = '30–180d';
+    classification = 'Established';
+  } else if (ageDays < 365) {
+    bucket = '180–365d';
+    classification = 'Established';
+  } else if (ageDays < 730) {
+    bucket = '>365d';
+    classification = 'Established';
+  } else {
+    bucket = '>730d';
+    classification = 'Established';
+  }
+  
+  return { bucket, classification };
 }
 
 function CopyButton({ text, mint }: { text: string; mint: string }) {
@@ -105,9 +133,10 @@ interface SignalScoreProps {
     dcaBuys3600s: number;
     maxUniqueWallets: number;
   };
+  pairCreatedAt?: number;
 }
 
-function SignalScoreDisplay({ summary, signal, metrics }: SignalScoreProps) {
+function SignalScoreDisplay({ summary, signal, metrics, pairCreatedAt }: SignalScoreProps) {
   if (!summary) {
     return <span className="text-gray-600 text-xs">—</span>;
   }
@@ -147,6 +176,9 @@ function SignalScoreDisplay({ summary, signal, metrics }: SignalScoreProps) {
       ? `${Math.floor(diff / 60)}m ago`
       : `${Math.floor(diff / 3600)}h ago`;
 
+  // Get age information
+  const ageInfo = getTokenAgeInfo(pairCreatedAt);
+
   return (
     <Tooltip.Provider delayDuration={200}>
       <Tooltip.Root>
@@ -173,36 +205,20 @@ function SignalScoreDisplay({ summary, signal, metrics }: SignalScoreProps) {
                 Signal Analysis
               </div>
               
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <div className="space-y-1">
                 <div>
                   <span className="text-gray-400">Appearances:</span>
-                  <div className="text-gray-200">24h: {appearance24h} · 72h: {appearance72h}</div>
+                  <span className="ml-1 text-gray-200">24h: {appearance24h} · 72h: {appearance72h}</span>
                 </div>
                 
-                <div>
-                  <span className="text-gray-400">Wallets:</span>
-                  <div className="text-gray-200">{metrics.maxUniqueWallets} unique</div>
-                </div>
-                
-                <div>
-                  <span className="text-gray-400">Net Flow (1h):</span>
-                  <div className={metrics.netFlow3600s > 0 ? 'text-green-400' : 'text-red-400'}>
-                    {metrics.netFlow3600s.toFixed(2)} ◎
+                {ageInfo && (
+                  <div>
+                    <span className="text-gray-400">Token Age:</span>
+                    <span className="ml-1 text-gray-200">{ageInfo.bucket}</span>
+                    <span className="ml-1 text-gray-500">({ageInfo.classification})</span>
                   </div>
-                </div>
-                
-                <div>
-                  <span className="text-gray-400">DCA Buys (1h):</span>
-                  <div className="text-gray-200">{metrics.dcaBuys3600s}</div>
-                </div>
+                )}
               </div>
-              
-              {signal && (
-                <div className="pt-1 border-t border-gray-700">
-                  <span className="text-gray-400">Micro Signal:</span>
-                  <span className="ml-1 text-blue-400">{signal.signalType}</span>
-                </div>
-              )}
               
               <div className="text-gray-500 text-[10px] pt-1">
                 Updated {timeAgo}
@@ -315,9 +331,6 @@ export default function TokenDashboard({
             <th className="text-left px-5 py-3 text-xs font-semibold text-gray-400">
               Token
             </th>
-            <th className="text-center px-5 py-3 text-xs font-semibold text-gray-400">
-              Age
-            </th>
             <th className="text-right px-5 py-3 text-xs font-semibold text-gray-400">
               Market Cap
             </th>
@@ -416,11 +429,6 @@ export default function TokenDashboard({
                       )}
                     </div>
                   </div>
-                </td>
-
-                {/* Age Column */}
-                <td className="px-5 py-3 text-xs text-center">
-                  <span className="text-gray-300">{formatTokenAge(meta?.pairCreatedAt)}</span>
                 </td>
 
                 {/* Market Cap Column */}
@@ -561,6 +569,7 @@ export default function TokenDashboard({
                       dcaBuys3600s: token.dcaBuys3600s,
                       maxUniqueWallets: token.maxUniqueWallets,
                     }}
+                    pairCreatedAt={meta?.pairCreatedAt}
                   />
                 </td>
 
