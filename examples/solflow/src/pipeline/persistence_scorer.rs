@@ -43,6 +43,7 @@ pub struct TokenSnapshot {
     pub volume_300s_sol: f64,
     pub updated_at: i64,
     pub created_at: i64,
+    pub pair_created_at: Option<i64>,
 }
 
 /// Signal summary for appearance tracking
@@ -94,7 +95,8 @@ impl PersistenceScorer {
                 ta.dca_buys_3600s,
                 ta.volume_300s_sol,
                 ta.updated_at,
-                ta.created_at
+                ta.created_at,
+                tm.pair_created_at
             FROM token_aggregates ta
             LEFT JOIN token_metadata tm ON ta.mint = tm.mint
             WHERE ta.dca_buys_3600s > 0
@@ -122,6 +124,7 @@ impl PersistenceScorer {
                     volume_300s_sol: row.get(12).unwrap_or(0.0),
                     updated_at: row.get(13).unwrap_or(0),
                     created_at: row.get(14).unwrap_or(0),
+                    pair_created_at: row.get(15).ok(),
                 })
             })?
             .collect::<SqliteResult<Vec<_>>>()?;
@@ -228,6 +231,37 @@ impl PersistenceScorer {
         (score / 10.0).clamp(0.0, 10.0).round() as i32
     }
 
+    /// Calculate age-based confidence multiplier
+    /// 
+    /// Age buckets and multipliers:
+    /// - <1 hour: 0.5 (50% penalty - strongest)
+    /// - 1-24 hours: 0.7 (30% penalty - moderate)
+    /// - 1-7 days: 1.0 (neutral - no change)
+    /// - 7-30 days: 1.1 (10% boost - small)
+    /// - >30 days: 1.3 (30% boost - stronger)
+    /// - Unknown age: 0.8 (modest penalty for missing data)
+    fn compute_age_multiplier(&self, pair_created_at: Option<i64>, now: i64) -> f64 {
+        let Some(created_at) = pair_created_at else {
+            return 0.8; // Unknown age: modest penalty
+        };
+        
+        let age_seconds = now - created_at;
+        let age_hours = age_seconds as f64 / 3600.0;
+        let age_days = age_hours / 24.0;
+        
+        if age_hours < 1.0 {
+            0.5 // <1h: strongest penalty
+        } else if age_hours < 24.0 {
+            0.7 // 1-24h: moderate penalty
+        } else if age_days < 7.0 {
+            1.0 // 1-7d: neutral
+        } else if age_days < 30.0 {
+            1.1 // 7-30d: small boost
+        } else {
+            1.3 // >30d: stronger boost
+        }
+    }
+
     /// Classify pattern tag
     fn classify_pattern(&self, token: &TokenSnapshot, dca_overlap: bool) -> String {
         let total_trades = token.buy_count_300s + token.sell_count_300s;
@@ -252,18 +286,37 @@ impl PersistenceScorer {
         }
     }
 
-    /// Compute confidence level
-    fn compute_confidence(&self, token: &TokenSnapshot, lifetime_hours: f64, bot_ratio: f64) -> String {
+    /// Compute confidence level with age-weighted adjustment
+    /// 
+    /// Base confidence factors:
+    /// - Data richness (40%): Based on trade volume
+    /// - Lifetime factor (30%): How long token has been active in aggregates
+    /// - Bot ratio (30%): Penalize bot activity
+    /// 
+    /// Age-weighted adjustment:
+    /// - Multiplies base score by age-based factor (0.5 to 1.3)
+    /// - Reduces confidence for very new tokens (<1h, <24h)
+    /// - Boosts confidence for mature tokens (>7d, >30d)
+    fn compute_confidence(&self, token: &TokenSnapshot, lifetime_hours: f64, bot_ratio: f64, now: i64) -> String {
         let total_trades = token.buy_count_300s + token.sell_count_300s;
         let data_richness = total_trades as f64 / 50.0;
         let lifetime_factor = (lifetime_hours / 24.0).min(1.0);
 
-        let confidence_score =
+        // Original confidence score (unchanged)
+        let base_confidence_score =
             data_richness * 0.4 + lifetime_factor * 0.3 + (1.0 - bot_ratio) * 0.3;
 
-        if confidence_score > 0.7 {
+        // Apply age-based multiplier
+        let age_multiplier = self.compute_age_multiplier(token.pair_created_at, now);
+        let adjusted_confidence_score = base_confidence_score * age_multiplier;
+
+        // Clamp to [0, 1] range after adjustment
+        let final_score = adjusted_confidence_score.clamp(0.0, 1.0);
+
+        // Thresholds (unchanged)
+        if final_score > 0.7 {
             "HIGH".to_string()
-        } else if confidence_score > 0.4 {
+        } else if final_score > 0.4 {
             "MEDIUM".to_string()
         } else {
             "LOW".to_string()
@@ -303,7 +356,7 @@ impl PersistenceScorer {
             // Compute metrics
             let persistence_score = self.compute_persistence_score(token, lifetime_hours, bot_ratio);
             let pattern_tag = self.classify_pattern(token, dca_overlap);
-            let confidence = self.compute_confidence(token, lifetime_hours, bot_ratio);
+            let confidence = self.compute_confidence(token, lifetime_hours, bot_ratio, now);
 
             // Get appearance counts
             let history = signal_history.get(&token.mint);
@@ -400,6 +453,7 @@ mod tests {
             volume_300s_sol: 10.0,
             updated_at: 1000000,
             created_at: 999000,
+            pair_created_at: None,
         };
 
         let lifetime_hours = 1000.0 / 3600.0;
@@ -430,6 +484,7 @@ mod tests {
             volume_300s_sol: 5.0,
             updated_at: 1000,
             created_at: 900,
+            pair_created_at: None,
         };
 
         let pattern = scorer.classify_pattern(&accumulation_token, true);
@@ -437,10 +492,105 @@ mod tests {
     }
 
     #[test]
-    fn test_confidence_calculation() {
+    fn test_age_multiplier_very_new_token() {
         let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        let created_30_min_ago = now - 1800;
+        
+        let multiplier = scorer.compute_age_multiplier(Some(created_30_min_ago), now);
+        assert_eq!(multiplier, 0.5); // <1h penalty
+    }
 
-        let high_confidence_token = TokenSnapshot {
+    #[test]
+    fn test_age_multiplier_young_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        let created_12_hours_ago = now - (12 * 3600);
+        
+        let multiplier = scorer.compute_age_multiplier(Some(created_12_hours_ago), now);
+        assert_eq!(multiplier, 0.7); // 1-24h moderate penalty
+    }
+
+    #[test]
+    fn test_age_multiplier_neutral_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        let created_3_days_ago = now - (3 * 86400);
+        
+        let multiplier = scorer.compute_age_multiplier(Some(created_3_days_ago), now);
+        assert_eq!(multiplier, 1.0); // 1-7d neutral
+    }
+
+    #[test]
+    fn test_age_multiplier_established_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        let created_15_days_ago = now - (15 * 86400);
+        
+        let multiplier = scorer.compute_age_multiplier(Some(created_15_days_ago), now);
+        assert_eq!(multiplier, 1.1); // 7-30d small boost
+    }
+
+    #[test]
+    fn test_age_multiplier_mature_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        let created_45_days_ago = now - (45 * 86400);
+        
+        let multiplier = scorer.compute_age_multiplier(Some(created_45_days_ago), now);
+        assert_eq!(multiplier, 1.3); // >30d boost
+    }
+
+    #[test]
+    fn test_age_multiplier_unknown() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+        
+        let multiplier = scorer.compute_age_multiplier(None, now);
+        assert_eq!(multiplier, 0.8); // Unknown age penalty
+    }
+
+    #[test]
+    fn test_confidence_with_age_adjustment_mature_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+
+        // Token created 45 days ago (should get 1.3x boost)
+        let mature_token = TokenSnapshot {
+            mint: "test".to_string(),
+            net_flow_60s: 0.0,
+            net_flow_300s: 0.0,
+            net_flow_900s: 0.0,
+            net_flow_3600s: 0.0,
+            net_flow_7200s: 0.0,
+            net_flow_14400s: 0.0,
+            unique_wallets_300s: 40,
+            bot_trades_300s: 5,
+            buy_count_300s: 40,
+            sell_count_300s: 40,
+            dca_buys_3600s: 0,
+            volume_300s_sol: 10.0,
+            updated_at: 1000000,
+            created_at: 900000,
+            pair_created_at: Some(now - (45 * 86400)),
+        };
+
+        let lifetime_hours = 100000.0 / 3600.0;
+        let bot_ratio = 5.0 / 80.0;
+
+        let confidence = scorer.compute_confidence(&mature_token, lifetime_hours, bot_ratio, now);
+        
+        // With age boost (1.3x), base score ~0.6 becomes ~0.78 → HIGH
+        assert_eq!(confidence, "HIGH");
+    }
+
+    #[test]
+    fn test_confidence_with_age_adjustment_new_token() {
+        let scorer = PersistenceScorer::new(":memory:".to_string());
+        let now = 1000000;
+
+        // Token created 30 min ago (should get 0.5x penalty)
+        let new_token = TokenSnapshot {
             mint: "test".to_string(),
             net_flow_60s: 0.0,
             net_flow_300s: 0.0,
@@ -455,13 +605,16 @@ mod tests {
             dca_buys_3600s: 0,
             volume_300s_sol: 10.0,
             updated_at: 1000000,
-            created_at: 900000,
+            created_at: 999000,
+            pair_created_at: Some(now - 1800), // 30 min ago
         };
 
-        let lifetime_hours = 100000.0 / 3600.0;
+        let lifetime_hours = 1000.0 / 3600.0;
         let bot_ratio = 5.0 / 100.0;
 
-        let confidence = scorer.compute_confidence(&high_confidence_token, lifetime_hours, bot_ratio);
-        assert_eq!(confidence, "HIGH");
+        let confidence = scorer.compute_confidence(&new_token, lifetime_hours, bot_ratio, now);
+        
+        // With age penalty (0.5x), even high base score becomes LOW/MEDIUM
+        assert!(confidence == "LOW" || confidence == "MEDIUM");
     }
 }

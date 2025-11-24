@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex};
 ///
 /// Thread-safe SQLite connection wrapper for checking if mints are blocked.
 /// Uses Arc<Mutex<Connection>> for concurrent access from multiple streamers.
+#[derive(Debug)]
 pub struct BlocklistChecker {
     conn: Arc<Mutex<Connection>>,
 }
