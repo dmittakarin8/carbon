@@ -17,6 +17,9 @@ use dotenv;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
+    // Initialize rustls crypto provider (required for TLS connections)
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Initialize runtime configuration
     let runtime_config = RuntimeConfig::from_env()?;
 
