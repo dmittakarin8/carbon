@@ -56,10 +56,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the instruction scanner
     let scanner = InstructionScanner::new();
 
-    // Create a placeholder config for backward compatibility
+    // Create a config with placeholder program_id (validation requires valid base58)
     // The actual program filtering happens in the scanner
     let config = StreamerConfig {
-        program_id: "unified".to_string(), // Placeholder - not used
+        program_id: "11111111111111111111111111111111".to_string(), // Placeholder system program
         program_name: "Unified".to_string(),
         output_path,
         backend,
