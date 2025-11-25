@@ -5,6 +5,7 @@ pub mod aggregator_core;
 mod aggregator;
 mod config;
 pub mod empty_decoder;
+pub mod instruction_scanner;
 mod persistence;
 mod state;
 pub mod sqlite_pragma;

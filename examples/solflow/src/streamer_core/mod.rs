@@ -12,5 +12,5 @@ mod lib;
 
 pub use blocklist_checker::BlocklistChecker;
 pub use config::{RuntimeConfig, StreamerConfig};
-pub use lib::run;
+pub use lib::{run, run_unified};
 pub use output_writer::TradeEvent;

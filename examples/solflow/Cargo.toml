@@ -53,6 +53,10 @@ name = "jupiter_dca_streamer"
 path = "src/bin/jupiter_dca_streamer.rs"
 
 [[bin]]
+name = "unified_streamer"
+path = "src/bin/unified_streamer.rs"
+
+[[bin]]
 name = "aggregator"
 path = "src/bin/aggregator.rs"
 

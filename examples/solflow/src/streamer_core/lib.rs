@@ -1,8 +1,9 @@
+use crate::instruction_scanner::InstructionScanner;
 use crate::streamer_core::{
     balance_extractor::{build_full_account_keys, extract_sol_changes, extract_token_changes},
     blocklist_checker::BlocklistChecker,
     config::{BackendType, RuntimeConfig, StreamerConfig},
-    grpc_client::run_with_reconnect,
+    grpc_client::{run_with_reconnect, create_multi_program_client},
     output_writer::{JsonlWriter, TradeEvent},
     sqlite_writer::SqliteWriter,
     trade_detector::extract_trade_info,
@@ -278,4 +279,244 @@ pub async fn run(streamer_config: StreamerConfig) -> Result<(), Box<dyn std::err
     .await?;
 
     Ok(())
+}
+
+/// Unified Trade Processor with integrated instruction scanner
+///
+/// This processor replaces the per-program TradeProcessor with a unified
+/// version that scans transactions for any of the tracked programs before
+/// processing balance deltas.
+#[derive(Clone)]
+struct UnifiedTradeProcessor {
+    scanner: InstructionScanner,
+    writer: Arc<Mutex<Box<dyn WriterBackend>>>,
+    pipeline_tx: Option<mpsc::Sender<crate::pipeline::types::TradeEvent>>,
+    send_count: Arc<AtomicU64>,
+    enable_jsonl: bool,
+    blocklist_checker: Option<BlocklistChecker>,
+}
+
+impl UnifiedTradeProcessor {
+    fn new(
+        scanner: InstructionScanner,
+        writer: Box<dyn WriterBackend>,
+        enable_jsonl: bool,
+        blocklist_checker: Option<BlocklistChecker>,
+        pipeline_tx: Option<mpsc::Sender<crate::pipeline::types::TradeEvent>>,
+    ) -> Self {
+        Self {
+            scanner,
+            writer: Arc::new(Mutex::new(writer)),
+            pipeline_tx,
+            send_count: Arc::new(AtomicU64::new(0)),
+            enable_jsonl,
+            blocklist_checker,
+        }
+    }
+}
+
+#[async_trait]
+impl Processor for UnifiedTradeProcessor {
+    type InputType = TransactionProcessorInputType<EmptyDecoderCollection>;
+
+    async fn process(
+        &mut self,
+        (metadata, _instructions, _): Self::InputType,
+        _metrics: Arc<MetricsCollection>,
+    ) -> CarbonResult<()> {
+        // STEP 1: Scan for tracked programs (NEW - FILTERING LAYER)
+        let program_match = match self.scanner.scan(&metadata) {
+            Some(m) => m,
+            None => {
+                // No tracked program found - discard transaction immediately
+                log::debug!("⏭️  No tracked program matched (signature: {})", metadata.signature);
+                return Ok(());
+            }
+        };
+
+        // VALIDATION PERIOD: Log all matches
+        log::info!(
+            "✅ Matched {} at {:?} (signature: {})",
+            program_match.program_name,
+            program_match.instruction_path,
+            metadata.signature
+        );
+
+        // STEP 2: Extract balance deltas (UNCHANGED)
+        let account_keys = build_full_account_keys(&metadata, &metadata.meta);
+        let sol_deltas = extract_sol_changes(&metadata.meta, &account_keys);
+        let token_deltas = extract_token_changes(&metadata.meta, &account_keys);
+
+        // STEP 3: Extract trade info (UNCHANGED)
+        if let Some(trade_info) = extract_trade_info(&sol_deltas, &token_deltas, &account_keys) {
+            // STEP 4: Blocklist check (UNCHANGED)
+            if let Some(ref checker) = self.blocklist_checker {
+                match checker.is_blocked(&trade_info.mint) {
+                    Ok(true) => {
+                        log::debug!("🚫 Blocked token: {}", trade_info.mint);
+                        return Ok(());
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        log::warn!("⚠️  Blocklist check failed for {}: {}", trade_info.mint, e);
+                    }
+                }
+            }
+
+            let discriminator = extract_discriminator_hex(&metadata);
+
+            // STEP 5: Create trade event (UPDATED WITH MATCHED PROGRAM)
+            let event = TradeEvent {
+                timestamp: metadata.block_time.unwrap_or_else(|| Utc::now().timestamp()),
+                signature: metadata.signature.to_string(),
+                program_id: program_match.program_id.to_string(),
+                program_name: program_match.program_name.to_string(), // From scanner
+                action: <&str>::from(trade_info.direction).to_string(),
+                mint: trade_info.mint.clone(),
+                sol_amount: trade_info.sol_amount,
+                token_amount: trade_info.token_amount,
+                token_decimals: trade_info.token_decimals,
+                user_account: trade_info.user_account.map(|pk| pk.to_string()),
+                discriminator,
+            };
+
+            // STEP 6: Write to pipeline + JSONL (UNCHANGED)
+            if let Some(tx) = &self.pipeline_tx {
+                let pipeline_event = convert_to_pipeline_event(&event);
+                if tx.try_send(pipeline_event).is_ok() {
+                    let count = self.send_count.fetch_add(1, Ordering::Relaxed);
+                    if count > 0 && count % 10_000 == 0 {
+                        log::info!("📊 Pipeline ingestion: {} trades sent", count);
+                    }
+                }
+            }
+
+            if self.enable_jsonl {
+                let mut writer = self.writer.lock().await;
+                if let Err(e) = writer.write(&event).await {
+                    log::error!("Failed to write JSONL event: {:?}", e);
+                } else {
+                    log::debug!(
+                        "✅ JSONL: {} {} {:.6} SOL → {:.2} tokens ({})",
+                        event.action,
+                        event.signature,
+                        event.sol_amount,
+                        event.token_amount,
+                        event.mint
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Run the unified streamer with instruction scanner
+///
+/// This function replaces the per-program `run()` function for the unified streamer.
+/// It uses multi-program gRPC filtering and scans both outer and inner instructions
+/// for matches against the tracked program registry.
+pub async fn run_unified(
+    streamer_config: StreamerConfig,
+    scanner: InstructionScanner,
+) -> Result<(), Box<dyn std::error::Error>> {
+    streamer_config.validate()?;
+
+    let runtime_config = RuntimeConfig::from_env()?;
+
+    // Initialize blocklist checker
+    let blocklist_checker = match std::env::var("SOLFLOW_DB_PATH") {
+        Ok(db_path) => {
+            match BlocklistChecker::new(&db_path) {
+                Ok(checker) => {
+                    log::info!("✅ Blocklist checker initialized: {}", db_path);
+                    log::info!("   └─ Blocked tokens will be discarded at scanner level");
+                    Some(checker)
+                }
+                Err(e) => {
+                    log::warn!("⚠️  Blocklist checker disabled: {}", e);
+                    log::warn!("   └─ Set SOLFLOW_DB_PATH to enable token blocking");
+                    None
+                }
+            }
+        }
+        Err(_) => {
+            log::info!("ℹ️  Blocklist checker disabled (SOLFLOW_DB_PATH not set)");
+            None
+        }
+    };
+
+    // Log JSONL status
+    if runtime_config.enable_jsonl {
+        log::info!("📝 JSONL writes: ENABLED");
+    } else {
+        log::info!("📝 JSONL writes: DISABLED (set ENABLE_JSONL=true to enable)");
+    }
+
+    let writer: Box<dyn WriterBackend> = match streamer_config.backend {
+        BackendType::Jsonl => {
+            Box::new(JsonlWriter::new(
+                &streamer_config.output_path,
+                runtime_config.output_max_size_mb,
+                runtime_config.output_max_rotations,
+            )?)
+        }
+        BackendType::Sqlite => {
+            Box::new(SqliteWriter::new(&streamer_config.output_path)?)
+        }
+    };
+
+    log::info!("📊 Backend: {}", writer.backend_type());
+
+    let pipeline_tx = streamer_config.pipeline_tx.clone();
+
+    let processor = UnifiedTradeProcessor::new(
+        scanner,
+        writer,
+        runtime_config.enable_jsonl,
+        blocklist_checker,
+        pipeline_tx,
+    );
+
+    // Create multi-program gRPC client and run with reconnect logic
+    let mut backoff = crate::streamer_core::error_handler::ExponentialBackoff::new(5, 60, 10);
+
+    loop {
+        match create_multi_program_client(&runtime_config).await {
+            Ok(client) => {
+                log::info!("✅ Connected to gRPC server (multi-program filter)");
+                backoff.reset();
+
+                let proc = processor.clone();
+                let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                    Pipeline::builder()
+                        .datasource(client)
+                        .metrics(Arc::new(LogMetrics::new()))
+                        .metrics_flush_interval(3)
+                        .transaction::<EmptyDecoderCollection, ()>(proc, None)
+                        .shutdown_strategy(ShutdownStrategy::Immediate)
+                        .build()
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
+                        .run()
+                        .await
+                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = result {
+                    log::error!("❌ Pipeline error: {:?}", e);
+                    backoff.sleep().await.map_err(|_| "Max retries exceeded")?;
+                } else {
+                    log::info!("✅ Pipeline completed gracefully");
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                log::error!("❌ Connection failed: {:?}", e);
+                backoff.sleep().await.map_err(|_| "Max retries exceeded")?;
+            }
+        }
+    }
 }
