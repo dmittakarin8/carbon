@@ -35,21 +35,43 @@ cd examples/solflow
 cargo build --release --bin mint_trace
 ```
 
-### 2. Set Environment Variables
+### 2. Create .env File
+
+**CRITICAL:** `mint_trace` (like `pipeline_runtime`) loads configuration from a `.env` file using dotenv. 
+Do **NOT** export environment variables in your shell - they must be in the `.env` file.
+
+Create a `.env` file in the project root (`examples/solflow/.env`):
 
 ```bash
-# gRPC endpoint (Yellowstone-compatible)
-export GEYSER_URL="http://127.0.0.1:10000"
+# .env file example (required)
+GEYSER_URL="https://basic.grpc.solanavibestation.com"
+X_TOKEN="your-token-here"
 
-# Optional: Authentication token
-export GEYSER_TOKEN="your-token-here"
-
-# Optional: Commitment level (default: confirmed)
-export COMMITMENT_LEVEL="confirmed"  # processed | confirmed | finalized
-
-# Optional: Rust log level
-export RUST_LOG="info"  # debug | info | warn | error
+# Optional settings
+COMMITMENT_LEVEL="confirmed"
+RUST_LOG="info"
 ```
+
+**Why .env?**
+- Both `mint_trace` and `pipeline_runtime` use the same authentication mechanism
+- dotenv loads `.env` at startup, then RuntimeConfig reads variables
+- This ensures consistent behavior across all tools
+- X_TOKEN is never exposed in process lists or shell history
+
+**Common Mistake:**
+```bash
+# ❌ WRONG - Don't export in shell
+export X_TOKEN="my-token"
+
+# ✅ CORRECT - Add to .env file
+echo 'X_TOKEN="my-token"' >> .env
+```
+
+**Important:** Most production Geyser endpoints require authentication. If you see errors like:
+- `401 Unauthorized`
+- `invalid compression flag: 60`
+
+This means your `X_TOKEN` is missing or invalid **in the .env file**.
 
 ### 3. Run Against a Mint
 
@@ -70,6 +92,159 @@ cargo run --release --bin mint_trace -- --mint <TRENDING_TOKEN_MINT> --log-file 
 ### 4. Stop Monitoring
 
 Press `CTRL+C` to gracefully shutdown.
+
+---
+
+## Authentication Requirements
+
+`mint_trace` uses the **same authentication mechanism as `pipeline_runtime`** for consistency. This ensures identical behavior when connecting to Yellowstone gRPC endpoints.
+
+### Environment Variables
+
+The tool reads the following environment variables (same as pipeline_runtime):
+
+- **`GEYSER_URL`** - Your Yellowstone gRPC endpoint (required)
+- **`X_TOKEN`** - Your authentication token (required for most endpoints)
+- `COMMITMENT_LEVEL` - Transaction commitment level (default: confirmed)
+- `RUST_LOG` - Log verbosity (default: info)
+
+### Example Setup
+
+```bash
+# Create .env file (required)
+cat > .env << 'EOF'
+GEYSER_URL="https://basic.grpc.solanavibestation.com"
+X_TOKEN="YOUR_TOKEN_HERE"
+COMMITMENT_LEVEL="confirmed"
+EOF
+
+# Run mint_trace (will automatically load .env)
+cargo run --release --bin mint_trace -- --mint <MINT> --log-file trace.log
+```
+
+### Authentication Diagnostics
+
+The tool provides clear feedback about authentication status:
+
+**At Startup (.env loading):**
+```
+✅ Loaded .env file from: /path/to/project/.env
+```
+or
+```
+⚠️  No .env file found (this is usually an error)
+   X_TOKEN must be provided via .env file for authentication
+```
+
+**Auth Status:**
+```
+🔐 X_TOKEN detected via .env file (authentication enabled)
+```
+or
+```
+❌ X_TOKEN missing in .env file (authentication will fail)
+   Add X_TOKEN to your .env file:
+   GEYSER_URL="https://your-endpoint.com"
+   X_TOKEN="your-token-here"
+   
+   Do NOT export X_TOKEN in your shell - it must be in .env
+```
+
+**On Connection Failure:**
+```
+❌ gRPC authentication failed (attempt 1/5)
+   Error details: protocol error: received message with invalid compression flag: 60 ...
+   💡 This usually means:
+      - X_TOKEN is missing or invalid
+      - GEYSER_URL requires authentication
+   Please check your environment configuration
+```
+
+### Common Authentication Errors
+
+**Error: `401 Unauthorized`**
+- **Cause:** X_TOKEN is missing, invalid, or expired in .env file
+- **Solution:** Check your .env file contains a valid X_TOKEN
+
+**Error: `invalid compression flag: 60 (valid flags are 0 and 1)`**
+- **Cause:** This is actually an authentication error! The server returns HTML/JSON instead of gRPC frames when auth fails
+- **Solution:** Check that X_TOKEN is present and valid in .env file
+
+**Error: `Authentication error: X_TOKEN must be set in the project's .env file`**
+- **Cause:** .env file doesn't contain X_TOKEN
+- **Solution:** 
+  1. Create/edit .env file in project root
+  2. Add: `X_TOKEN="your-token-here"`
+  3. Do NOT use shell export - must be in .env
+
+**Error: `Failed to connect after 5 attempts. Check X_TOKEN in .env file and GEYSER_URL`**
+- **Cause:** Repeated connection failures, likely due to auth
+- **Solution:** 
+  1. Verify .env file exists: `ls -la .env`
+  2. Verify .env contains X_TOKEN: `grep X_TOKEN .env` (don't print value!)
+  3. Verify GEYSER_URL in .env is correct
+  4. Test with a known-working .env from pipeline_runtime
+
+### Verifying Configuration
+
+Before running mint_trace, verify your .env file:
+
+```bash
+# Check .env file exists
+ls -la .env
+
+# Check .env contains required variables (without exposing values)
+grep -E "GEYSER_URL|X_TOKEN" .env | sed 's/=.*/=***/'
+
+# Expected output:
+# GEYSER_URL=***
+# X_TOKEN=***
+
+# Verify .env file is readable
+cat .env | wc -l  # Should show > 0 lines
+```
+
+**Do NOT check shell environment:**
+```bash
+# ❌ WRONG - These will be empty (and should be!)
+echo $GEYSER_URL
+echo $X_TOKEN
+
+# ✅ CORRECT - Check .env file instead
+grep GEYSER_URL .env
+grep X_TOKEN .env | cut -d= -f1  # Shows key name only
+```
+
+### Using Same Config as pipeline_runtime
+
+Both tools use the **exact same .env file** - no exports needed:
+
+```bash
+# Both tools automatically load from .env
+# No need to source or export anything
+
+# If pipeline_runtime works:
+cargo run --bin pipeline_runtime  # Works
+
+# Then mint_trace should also work (same .env):
+cargo run --bin mint_trace -- --mint <MINT>  # Should also work
+
+# They both:
+# 1. Call dotenv() to load .env
+# 2. Use RuntimeConfig to read X_TOKEN from env
+# 3. Pass x_token to YellowstoneGrpcGeyserClient
+```
+
+**Troubleshooting different behavior:**
+
+If pipeline_runtime works but mint_trace doesn't:
+1. Verify both run from same directory (same .env file)
+2. Check .env file hasn't changed between runs
+3. Verify no shell exports are interfering:
+   ```bash
+   unset GEYSER_URL X_TOKEN  # Clear any shell variables
+   cargo run --bin mint_trace -- --mint <MINT>
+   ```
 
 ---
 
@@ -202,12 +377,14 @@ grep -B 5 "❌ FAILED" raw_data.log
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GEYSER_URL` | `http://127.0.0.1:10000` | Yellowstone gRPC endpoint |
-| `GEYSER_TOKEN` | (none) | Optional authentication token |
-| `COMMITMENT_LEVEL` | `confirmed` | Transaction commitment level |
-| `RUST_LOG` | `info` | Log verbosity level |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GEYSER_URL` | **Yes** | (none) | Yellowstone gRPC endpoint |
+| `X_TOKEN` | **Yes*** | (none) | Authentication token |
+| `COMMITMENT_LEVEL` | No | `confirmed` | Transaction commitment level |
+| `RUST_LOG` | No | `info` | Log verbosity level |
+
+**\*** Required for authenticated endpoints (most production endpoints require this)
 
 ---
 

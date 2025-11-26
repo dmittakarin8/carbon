@@ -24,10 +24,21 @@
 //!
 //! ## Environment Variables
 //!
-//! - `GEYSER_URL` - gRPC endpoint (default: http://127.0.0.1:10000)
-//! - `GEYSER_TOKEN` - Authentication token (optional)
+//! - `GEYSER_URL` - gRPC endpoint (required)
+//! - `X_TOKEN` - Authentication token (optional, but required for authenticated endpoints)
 //! - `COMMITMENT_LEVEL` - Transaction commitment (default: Confirmed)
 //! - `RUST_LOG` - Log level (default: info)
+//!
+//! ## Authentication
+//!
+//! Authentication is standardized: X_TOKEN must come from the project's .env file
+//! and is loaded through RuntimeConfig, matching pipeline_runtime.
+//!
+//! The tool uses dotenv to load .env at startup, then RuntimeConfig reads X_TOKEN
+//! from the environment. This ensures identical behavior to pipeline_runtime.
+//!
+//! **Important:** X_TOKEN must be set in the .env file, NOT exported in your shell.
+//! If you see "401 Unauthorized" errors, check that .env contains X_TOKEN.
 //!
 //! ## Technical Approach
 //!
@@ -66,6 +77,7 @@ use empty_decoder::EmptyDecoderCollection;
 
 use solflow::streamer_core::{
     balance_extractor::{build_full_account_keys, extract_sol_changes, extract_token_changes},
+    config::RuntimeConfig,
     grpc_client::create_single_account_client,
 };
 
@@ -130,13 +142,14 @@ impl Logger {
 }
 
 /// Command-line configuration for mint tracing
+///
+/// Note: gRPC and auth configuration is intentionally mirrored from pipeline_runtime
+/// for consistency. We use RuntimeConfig to ensure identical connection behavior.
 #[derive(Clone)]
 struct MintTraceConfig {
     target_mint: String,
     log_file_path: Option<String>,
-    geyser_url: String,
-    geyser_token: Option<String>,
-    commitment_level: CommitmentLevel,
+    runtime_config: RuntimeConfig,
 }
 
 impl MintTraceConfig {
@@ -160,28 +173,14 @@ impl MintTraceConfig {
             .find(|w| w[0] == "--log-file")
             .map(|w| w[1].clone());
 
-        let geyser_url = std::env::var("GEYSER_URL")
-            .unwrap_or_else(|_| "http://127.0.0.1:10000".to_string());
-
-        let geyser_token = std::env::var("GEYSER_TOKEN").ok();
-
-        let commitment_level = match std::env::var("COMMITMENT_LEVEL")
-            .unwrap_or_else(|_| "confirmed".to_string())
-            .to_lowercase()
-            .as_str()
-        {
-            "processed" => CommitmentLevel::Processed,
-            "confirmed" => CommitmentLevel::Confirmed,
-            "finalized" => CommitmentLevel::Finalized,
-            _ => CommitmentLevel::Confirmed,
-        };
+        // Use RuntimeConfig to read env vars (same as pipeline_runtime)
+        // This ensures consistent behavior for GEYSER_URL, X_TOKEN, COMMITMENT_LEVEL, etc.
+        let runtime_config = RuntimeConfig::from_env()?;
 
         Ok(Self {
             target_mint,
             log_file_path,
-            geyser_url,
-            geyser_token,
-            commitment_level,
+            runtime_config,
         })
     }
 }
@@ -427,13 +426,13 @@ async fn run_with_reconnect(
     let mut retry_count = 0;
 
     loop {
-        log::info!("🔌 Connecting to gRPC endpoint: {}", config.geyser_url);
+        log::info!("🔌 Connecting to gRPC endpoint: {}", config.runtime_config.geyser_url);
         
         let client = match create_single_account_client(
-            &config.geyser_url,
-            config.geyser_token.clone(),
+            &config.runtime_config.geyser_url,
+            config.runtime_config.x_token.clone(),
             &config.target_mint,
-            config.commitment_level,
+            config.runtime_config.commitment_level,
         )
         .await
         {
@@ -444,10 +443,23 @@ async fn run_with_reconnect(
             }
             Err(e) => {
                 retry_count += 1;
-                log::error!("❌ Connection failed (attempt {}/{}): {}", retry_count, max_retries, e);
+                let error_msg = format!("{}", e);
+                
+                // Check if this looks like an auth error
+                if error_msg.contains("401") || error_msg.contains("Unauthorized") || error_msg.contains("invalid compression flag") {
+                    log::error!("❌ gRPC authentication failed (attempt {}/{})", retry_count, max_retries);
+                    log::error!("   Error details: {}", e);
+                    log::error!("   💡 This usually means:");
+                    log::error!("      - X_TOKEN is missing or invalid in .env file");
+                    log::error!("      - GEYSER_URL requires authentication");
+                    log::error!("   Check that your .env file contains:");
+                    log::error!("      X_TOKEN=\"your-valid-token\"");
+                } else {
+                    log::error!("❌ Connection failed (attempt {}/{}): {}", retry_count, max_retries, e);
+                }
                 
                 if retry_count >= max_retries {
-                    return Err(format!("Failed to connect after {} attempts", max_retries).into());
+                    return Err(format!("Failed to connect after {} attempts. Check X_TOKEN in .env file and GEYSER_URL", max_retries).into());
                 }
                 
                 let backoff = std::time::Duration::from_secs(2u64.pow(retry_count.min(5)));
@@ -483,7 +495,16 @@ async fn run_with_reconnect(
             }
             Err(e) => {
                 retry_count += 1;
-                log::error!("❌ Pipeline error (attempt {}/{}): {}", retry_count, max_retries, e);
+                let error_msg = format!("{}", e);
+                
+                // Check for auth-related errors in pipeline execution
+                if error_msg.contains("401") || error_msg.contains("Unauthorized") || error_msg.contains("invalid compression flag") {
+                    log::error!("❌ gRPC stream failed with authentication error (attempt {}/{})", retry_count, max_retries);
+                    log::error!("   Error: {}", e);
+                    log::error!("   💡 Check X_TOKEN in .env file");
+                } else {
+                    log::error!("❌ Pipeline error (attempt {}/{}): {}", retry_count, max_retries, e);
+                }
                 
                 if retry_count >= max_retries {
                     return Err(format!("Pipeline failed after {} attempts: {}", max_retries, e).into());
@@ -499,13 +520,23 @@ async fn run_with_reconnect(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load environment variables
-    dotenv().ok();
+    // CRITICAL: Load environment variables from .env file FIRST
+    // This must happen before RuntimeConfig reads X_TOKEN
+    // Both mint_trace and pipeline_runtime use this same pattern
+    match dotenv() {
+        Ok(path) => {
+            eprintln!("✅ Loaded .env file from: {}", path.display());
+        }
+        Err(_) => {
+            eprintln!("⚠️  No .env file found (this is usually an error)");
+            eprintln!("   X_TOKEN must be provided via .env file for authentication");
+        }
+    }
 
     // Initialize rustls crypto provider (required for TLS connections)
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    // Parse configuration
+    // Parse configuration (RuntimeConfig will now read X_TOKEN from dotenv-loaded env)
     let config = MintTraceConfig::from_env_and_args()?;
 
     // Initialize logger
@@ -535,8 +566,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║                          MINT TRACE - Transaction Monitor                     ║");
     println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
     println!("║ Target Mint:  {:<67} ║", config.target_mint);
-    println!("║ Geyser URL:   {:<67} ║", config.geyser_url);
-    println!("║ Commitment:   {:<67} ║", format!("{:?}", config.commitment_level));
+    println!("║ Geyser URL:   {:<67} ║", config.runtime_config.geyser_url);
+    println!("║ Commitment:   {:<67} ║", format!("{:?}", config.runtime_config.commitment_level));
+    
+    // Auth status (without leaking token value)
+    let auth_status = if config.runtime_config.x_token.is_some() {
+        "✅ Configured"
+    } else {
+        "⚠️  Not set (may fail on authenticated endpoints)"
+    };
+    println!("║ Auth Token:   {:<67} ║", auth_status);
+    
     if let Some(ref log_file) = config.log_file_path {
         println!("║ Log File:     {:<67} ║", log_file);
     }
@@ -547,8 +587,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     log::info!("🎯 Target mint: {}", config.target_mint);
-    log::info!("🔗 Geyser URL: {}", config.geyser_url);
-    log::info!("📊 Commitment: {:?}", config.commitment_level);
+    log::info!("🔗 Geyser URL: {}", config.runtime_config.geyser_url);
+    log::info!("📊 Commitment: {:?}", config.runtime_config.commitment_level);
+    
+    // Log auth status without exposing token
+    // X_TOKEN must come from .env file (loaded by dotenv above)
+    if config.runtime_config.x_token.is_some() {
+        log::info!("🔐 X_TOKEN detected via .env file (authentication enabled)");
+    } else {
+        log::error!("❌ X_TOKEN missing in .env file (authentication will fail)");
+        log::error!("   Add X_TOKEN to your .env file:");
+        log::error!("   GEYSER_URL=\"https://your-endpoint.com\"");
+        log::error!("   X_TOKEN=\"your-token-here\"");
+        log::error!("");
+        log::error!("   Do NOT export X_TOKEN in your shell - it must be in .env");
+        
+        return Err("Authentication error: X_TOKEN must be set in the project's .env file (not shell environment)".into());
+    }
+    
     if let Some(ref log_file) = config.log_file_path {
         log::info!("📝 Log file: {}", log_file);
     }
