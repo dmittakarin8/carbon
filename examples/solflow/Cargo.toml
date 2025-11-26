@@ -36,33 +36,43 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 name = "grpc_verify"
 path = "src/bin/grpc_verify.rs"
 
+# Legacy per-program streamers (DEPRECATED - use pipeline_runtime with unified mode)
 [[bin]]
 name = "pumpswap_streamer"
 path = "src/bin/pumpswap_streamer.rs"
+# DEPRECATED: Replaced by unified streamer in pipeline_runtime
 
 [[bin]]
 name = "bonkswap_streamer"
 path = "src/bin/bonkswap_streamer.rs"
+# DEPRECATED: Replaced by unified streamer in pipeline_runtime
 
 [[bin]]
 name = "moonshot_streamer"
 path = "src/bin/moonshot_streamer.rs"
+# DEPRECATED: Replaced by unified streamer in pipeline_runtime
 
 [[bin]]
 name = "jupiter_dca_streamer"
 path = "src/bin/jupiter_dca_streamer.rs"
+# DEPRECATED: Replaced by unified streamer in pipeline_runtime
 
+# Unified streamer (STANDALONE - for development/testing only)
 [[bin]]
 name = "unified_streamer"
 path = "src/bin/unified_streamer.rs"
+# NOTE: This binary is standalone and lacks pipeline integration.
+# For production, use pipeline_runtime with ENABLE_PIPELINE=true.
 
 [[bin]]
 name = "aggregator"
 path = "src/bin/aggregator.rs"
 
+# Production runtime (RECOMMENDED)
 [[bin]]
 name = "pipeline_runtime"
 path = "src/bin/pipeline_runtime.rs"
+# PRODUCTION BINARY: Includes unified streamer + full pipeline ingestion
 
 # Meta-analysis streamers (feature/streamer-meta-analysis branch)
 [[bin]]

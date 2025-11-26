@@ -26,6 +26,9 @@ pub struct PipelineConfig {
     
     /// Master enable flag for pipeline
     pub enabled: bool,
+    
+    /// Toggle between legacy (4 streamers) and unified (1 streamer with InstructionScanner)
+    pub use_unified_streamer: bool,
 }
 
 impl PipelineConfig {
@@ -38,6 +41,7 @@ impl PipelineConfig {
     /// - `PRICE_UPDATE_INTERVAL_MS` (default: 10000)
     /// - `METADATA_UPDATE_INTERVAL_MS` (default: 60000)
     /// - `ENABLE_PIPELINE` (default: false)
+    /// - `USE_UNIFIED_STREAMER` (default: true)
     pub fn from_env() -> Self {
         Self {
             db_path: env::var("SOLFLOW_DB_PATH")
@@ -67,6 +71,11 @@ impl PipelineConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(false),
+            
+            use_unified_streamer: env::var("USE_UNIFIED_STREAMER")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(true),
         }
     }
 }

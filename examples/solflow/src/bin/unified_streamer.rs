@@ -1,5 +1,25 @@
-//! Unified SolFlow Streamer
+//! [STANDALONE - DEV/TEST ONLY] Unified SolFlow Streamer
 //!
+//! ⚠️  WARNING: This binary runs in ISOLATED MODE and does NOT write to the database.
+//!
+//! This streamer successfully detects transactions via InstructionScanner but has
+//! no pipeline integration. All matched trades are logged then discarded.
+//!
+//! **For production use:** Run `pipeline_runtime` instead, which includes the
+//! unified streamer WITH full pipeline integration (channels, ingestion, DB writes).
+//!
+//! This binary is retained for:
+//! - Development testing of InstructionScanner
+//! - gRPC connection validation
+//! - Scanner match validation
+//!
+//! It will be removed once unified mode in pipeline_runtime is fully validated.
+//!
+//! See: `docs/20251126-unified-pipeline-missing-link.md`
+//!
+//! ---
+//!
+//! Original Description:
 //! This binary replaces the 4 individual program streamers (PumpSwap, BonkSwap,
 //! Moonshot, Jupiter DCA) with a single unified ingestion system that:
 //!

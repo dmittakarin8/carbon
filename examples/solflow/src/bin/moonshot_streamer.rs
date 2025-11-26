@@ -1,3 +1,15 @@
+//! [DEPRECATED] Moonshot Trade Streamer
+//!
+//! This binary has been replaced by the unified streamer in `pipeline_runtime.rs`.
+//! 
+//! As of 2025-11-26, all 5 tracked programs (PumpFun, PumpSwap, BonkSwap, 
+//! Moonshot, Jupiter DCA) are handled by a single unified streamer using 
+//! InstructionScanner for multi-program detection.
+//!
+//! **Do not use this binary in production.** It will be removed in a future release.
+//!
+//! For details, see: `docs/20251126-unified-instruction-scanner-architecture.md`
+
 use solflow::streamer_core::{run, StreamerConfig};
 use solflow::streamer_core::config::BackendType;
 

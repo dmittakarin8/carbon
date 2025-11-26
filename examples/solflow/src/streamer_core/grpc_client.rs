@@ -38,30 +38,43 @@ impl std::error::Error for ClientError {}
 /// The gRPC filter matches ANY transaction where these programs appear in the
 /// account keys, which covers both outer and inner (CPI) instructions because
 /// Solana includes all CPI program IDs in the transaction account list.
+///
+/// CRITICAL: Uses OR semantics by creating one filter per program.
+/// Multiple filters in the map are treated as OR logic by Yellowstone gRPC.
 pub async fn create_multi_program_client(
     config: &RuntimeConfig,
 ) -> Result<YellowstoneGrpcGeyserClient, ClientError> {
-    let transaction_filter = SubscribeRequestFilterTransactions {
-        vote: Some(false),
-        failed: Some(false),
-        account_include: vec![],
-        account_exclude: vec![],
-        // CRITICAL: Include all 5 tracked programs
-        account_required: vec![
-            "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P".to_string(), // PumpFun
-            "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(), // PumpSwap
-            "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj".to_string(), // BonkSwap
-            "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG".to_string(),  // Moonshot
-            "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M".to_string(), // Jupiter DCA
-        ],
-        signature: None,
-    };
+    // Define all tracked programs with their identifiers
+    let programs = vec![
+        ("pumpfun", "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"),
+        ("pumpswap", "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"),
+        ("bonkswap", "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj"),
+        ("moonshot", "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG"),
+        ("jupiter_dca", "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M"),
+    ];
 
+    // Create separate filter for each program (OR logic)
+    // account_required with multiple entries uses AND logic (all must be present)
+    // Multiple filters in the map use OR logic (any filter can match)
+    // This follows the pattern from grpc_verify.rs:486-502
     let mut transaction_filters = HashMap::new();
-    transaction_filters.insert("multi_program_filter".to_string(), transaction_filter);
+
+    for (name, program_id) in programs.iter() {
+        let filter = SubscribeRequestFilterTransactions {
+            vote: Some(false),
+            failed: Some(false),
+            account_include: vec![],
+            account_exclude: vec![],
+            account_required: vec![program_id.to_string()], // ONE program per filter
+            signature: None,
+        };
+        transaction_filters.insert(format!("{}_filter", name), filter);
+    }
 
     log::info!("🔗 Creating multi-program gRPC client");
-    log::info!("   Filtering: 5 tracked programs (outer + inner instructions)");
+    log::info!("   Registered {} transaction filters for multi-program matching", programs.len());
+    log::info!("   Filter logic: OR (transactions matching ANY of the 5 programs)");
+    log::info!("   Filtering: PumpFun, PumpSwap, BonkSwap, Moonshot, Jupiter DCA");
 
     Ok(YellowstoneGrpcGeyserClient::new(
         config.geyser_url.clone(),

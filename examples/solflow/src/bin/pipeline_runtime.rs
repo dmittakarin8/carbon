@@ -61,7 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   ├─ Flush interval: {}ms", config.flush_interval_ms);
     info!("   ├─ Price interval: {}ms", config.price_interval_ms);
     info!("   ├─ Metadata interval: {}ms", config.metadata_interval_ms);
-    info!("   └─ Integrated streamers: 4 (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
+    if config.use_unified_streamer {
+        info!("   └─ Integrated streamers: 1 unified (5 programs via InstructionScanner)");
+    } else {
+        info!("   └─ Integrated streamers: 4 (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
+    }
 
     // Initialize database
     info!("🔧 Initializing database...");
@@ -84,78 +88,114 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel::<TradeEvent>(config.channel_buffer);
     info!("✅ Trade channel created (buffer: {})", config.channel_buffer);
 
-    // Phase 4.2b: Spawn all streamers with pipeline integration
-    info!("🚀 Spawning streamers with pipeline integration...");
+    // Phase 4.2b: Spawn streamers with pipeline integration
+    info!("🚀 Spawning streamers...");
     
-    // Streamer 1: PumpSwap
-    let tx_pump = tx.clone();
-    tokio::spawn(async move {
-        info!("   ├─ Starting PumpSwap streamer with pipeline connected");
-        let streamer_config = StreamerConfig {
-            program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),
-            program_name: "PumpSwap".to_string(),
-            output_path: env::var("PUMPSWAP_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
-            backend: BackendType::Jsonl,
-            pipeline_tx: Some(tx_pump),
-        };
-        if let Err(e) = run_streamer(streamer_config).await {
-            error!("❌ PumpSwap streamer failed: {}", e);
-        }
-    });
-    
-    // Streamer 2: BonkSwap
-    let tx_bonk = tx.clone();
-    tokio::spawn(async move {
-        info!("   ├─ Starting BonkSwap streamer with pipeline connected");
-        let streamer_config = StreamerConfig {
-            program_id: "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj".to_string(),
-            program_name: "BonkSwap".to_string(),
-            output_path: env::var("BONKSWAP_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/bonkswap/events.jsonl".to_string()),
-            backend: BackendType::Jsonl,
-            pipeline_tx: Some(tx_bonk),
-        };
-        if let Err(e) = run_streamer(streamer_config).await {
-            error!("❌ BonkSwap streamer failed: {}", e);
-        }
-    });
-    
-    // Streamer 3: Moonshot
-    let tx_moon = tx.clone();
-    tokio::spawn(async move {
-        info!("   ├─ Starting Moonshot streamer with pipeline connected");
-        let streamer_config = StreamerConfig {
-            program_id: "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG".to_string(),
-            program_name: "Moonshot".to_string(),
-            output_path: env::var("MOONSHOT_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/moonshot/events.jsonl".to_string()),
-            backend: BackendType::Jsonl,
-            pipeline_tx: Some(tx_moon),
-        };
-        if let Err(e) = run_streamer(streamer_config).await {
-            error!("❌ Moonshot streamer failed: {}", e);
-        }
-    });
-    
-    // Streamer 4: Jupiter DCA
-    let tx_jup = tx.clone();
-    tokio::spawn(async move {
-        info!("   └─ Starting JupiterDCA streamer with pipeline connected");
-        let streamer_config = StreamerConfig {
-            program_id: "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M".to_string(),
-            program_name: "JupiterDCA".to_string(),
-            output_path: env::var("JUPITER_DCA_OUTPUT_PATH")
-                .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string()),
-            backend: BackendType::Jsonl,
-            pipeline_tx: Some(tx_jup),
-        };
-        if let Err(e) = run_streamer(streamer_config).await {
-            error!("❌ JupiterDCA streamer failed: {}", e);
-        }
-    });
-    
-    info!("✅ All 4 streamers spawned and connected to pipeline");
+    if config.use_unified_streamer {
+        // UNIFIED MODE: Single streamer with InstructionScanner
+        info!("   Mode: UNIFIED (5 programs via InstructionScanner)");
+        
+        let tx_unified = tx.clone();
+        tokio::spawn(async move {
+            info!("   └─ Starting unified streamer with pipeline connected");
+            
+            use solflow::instruction_scanner::InstructionScanner;
+            use solflow::streamer_core::run_unified;
+            
+            // Initialize scanner
+            let scanner = InstructionScanner::new();
+            
+            // Create streamer config with pipeline channel
+            let streamer_config = StreamerConfig {
+                program_id: "11111111111111111111111111111111".to_string(), // Placeholder (scanner handles filtering)
+                program_name: "Unified".to_string(),
+                output_path: env::var("UNIFIED_OUTPUT_PATH")
+                    .unwrap_or_else(|_| "streams/unified/events.jsonl".to_string()),
+                backend: BackendType::Jsonl, // Ignored (pipeline mode uses channel only)
+                pipeline_tx: Some(tx_unified), // ← CRITICAL: Connect to pipeline
+            };
+            
+            if let Err(e) = run_unified(streamer_config, scanner).await {
+                error!("❌ Unified streamer failed: {}", e);
+            }
+        });
+        
+        info!("✅ Unified streamer spawned and connected to pipeline");
+    } else {
+        // LEGACY MODE: 4 separate program streamers
+        info!("   Mode: LEGACY (4 separate streamers)");
+        info!("   ⚠️  WARNING: Legacy mode is deprecated. Set USE_UNIFIED_STREAMER=true.");
+        
+        // Streamer 1: PumpSwap
+        let tx_pump = tx.clone();
+        tokio::spawn(async move {
+            info!("   ├─ Starting PumpSwap streamer with pipeline connected");
+            let streamer_config = StreamerConfig {
+                program_id: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA".to_string(),
+                program_name: "PumpSwap".to_string(),
+                output_path: env::var("PUMPSWAP_OUTPUT_PATH")
+                    .unwrap_or_else(|_| "streams/pumpswap/events.jsonl".to_string()),
+                backend: BackendType::Jsonl,
+                pipeline_tx: Some(tx_pump),
+            };
+            if let Err(e) = run_streamer(streamer_config).await {
+                error!("❌ PumpSwap streamer failed: {}", e);
+            }
+        });
+        
+        // Streamer 2: BonkSwap
+        let tx_bonk = tx.clone();
+        tokio::spawn(async move {
+            info!("   ├─ Starting BonkSwap streamer with pipeline connected");
+            let streamer_config = StreamerConfig {
+                program_id: "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj".to_string(),
+                program_name: "BonkSwap".to_string(),
+                output_path: env::var("BONKSWAP_OUTPUT_PATH")
+                    .unwrap_or_else(|_| "streams/bonkswap/events.jsonl".to_string()),
+                backend: BackendType::Jsonl,
+                pipeline_tx: Some(tx_bonk),
+            };
+            if let Err(e) = run_streamer(streamer_config).await {
+                error!("❌ BonkSwap streamer failed: {}", e);
+            }
+        });
+        
+        // Streamer 3: Moonshot
+        let tx_moon = tx.clone();
+        tokio::spawn(async move {
+            info!("   ├─ Starting Moonshot streamer with pipeline connected");
+            let streamer_config = StreamerConfig {
+                program_id: "MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG".to_string(),
+                program_name: "Moonshot".to_string(),
+                output_path: env::var("MOONSHOT_OUTPUT_PATH")
+                    .unwrap_or_else(|_| "streams/moonshot/events.jsonl".to_string()),
+                backend: BackendType::Jsonl,
+                pipeline_tx: Some(tx_moon),
+            };
+            if let Err(e) = run_streamer(streamer_config).await {
+                error!("❌ Moonshot streamer failed: {}", e);
+            }
+        });
+        
+        // Streamer 4: Jupiter DCA
+        let tx_jup = tx.clone();
+        tokio::spawn(async move {
+            info!("   └─ Starting JupiterDCA streamer with pipeline connected");
+            let streamer_config = StreamerConfig {
+                program_id: "DCA265Vj8a9CEuX1eb1LWRnDT7uK6q1xMipnNyatn23M".to_string(),
+                program_name: "JupiterDCA".to_string(),
+                output_path: env::var("JUPITER_DCA_OUTPUT_PATH")
+                    .unwrap_or_else(|_| "streams/jupiter_dca/events.jsonl".to_string()),
+                backend: BackendType::Jsonl,
+                pipeline_tx: Some(tx_jup),
+            };
+            if let Err(e) = run_streamer(streamer_config).await {
+                error!("❌ JupiterDCA streamer failed: {}", e);
+            }
+        });
+        
+        info!("✅ All 4 streamers spawned and connected to pipeline");
+    }
 
     // Spawn background tasks
     info!("🚀 Spawning background tasks...");
@@ -218,7 +258,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     info!("   ├─ ✅ DCA bucket cleanup task spawned (interval: 300s)");
 
-    // Task 3: Price Monitoring (every 60s with rate limiting)
+    // Task 3: Price Update Task (every 60s with rate limiting)
     let db_path_price = config.db_path.clone();
     tokio::spawn(async move {
         use solflow::pipeline::dexscreener;
@@ -229,18 +269,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             interval.tick().await;
             
-            // Query tokens with follow_price = 1 (in separate scope to drop connection)
-            let mints: Vec<String> = {
+            // Query tokens with follow_price = 1 and check staleness (in separate scope to drop connection)
+            let mints_with_staleness: Vec<(String, i64)> = {
                 let conn = match Connection::open(&db_path_price) {
                     Ok(c) => c,
                     Err(e) => {
-                        error!("❌ Failed to open DB for price monitoring: {}", e);
+                        error!("❌ Failed to open DB for price update: {}", e);
                         continue;
                     }
                 };
                 
                 let mut stmt = match conn.prepare(
-                    "SELECT mint FROM token_metadata WHERE follow_price = 1"
+                    "SELECT mint, updated_at FROM token_metadata WHERE follow_price = 1"
                 ) {
                     Ok(s) => s,
                     Err(e) => {
@@ -250,8 +290,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 
                 match stmt
-                    .query_map([], |row| row.get(0))
-                    .and_then(|rows| rows.collect::<Result<Vec<String>, _>>()) 
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .and_then(|rows| rows.collect::<Result<Vec<(String, i64)>, _>>()) 
                 {
                     Ok(m) => m,
                     Err(e) => {
@@ -261,24 +301,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }; // Connection dropped here
             
-            if mints.is_empty() {
+            if mints_with_staleness.is_empty() {
                 continue;
             }
             
-            info!("🔄 Price monitoring: {} tokens tracked", mints.len());
+            // Filter for stale tokens (updated_at older than 120 seconds)
+            let now = chrono::Utc::now().timestamp();
+            let stale_mints: Vec<String> = mints_with_staleness
+                .into_iter()
+                .filter(|(_, updated_at)| (now - updated_at) > 120)
+                .map(|(mint, _)| mint)
+                .collect();
+            
+            let total_tracked = stale_mints.len();
+            if total_tracked == 0 {
+                continue;
+            }
+            
+            info!("🔄 Price update: {} tokens tracked", total_tracked);
+            
+            let mut updated_count = 0;
+            let mut error_count = 0;
             
             // Stagger requests: 300-600ms between calls (2-3 req/sec)
-            for mint in mints {
-                // Fetch metadata (includes price)
-                let metadata = match dexscreener::fetch_token_metadata(&mint).await {
-                    Ok(m) => m,
+            for mint in stale_mints {
+                // Check if row exists before attempting update
+                let exists = {
+                    let conn = match Connection::open(&db_path_price) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            error!("❌ Failed to open DB for existence check: {}", e);
+                            continue;
+                        }
+                    };
+                    dexscreener::row_exists(&conn, &mint)
+                };
+                
+                if !exists {
+                    // Skip silently - invalid mint or not followed
+                    continue;
+                }
+                
+                // Fetch price data only (no metadata)
+                let price = match dexscreener::fetch_token_price(&mint).await {
+                    Ok(p) => p,
                     Err(e) => {
-                        error!("❌ Failed to fetch metadata for {}: {}", mint, e);
+                        warn!("⚠️  Failed to update price for {}: {} (skipping)", mint, e);
+                        error_count += 1;
                         continue;
                     }
                 };
                 
-                // Update database (in separate scope)
+                // Update database with price only (in separate scope)
                 {
                     let conn = match Connection::open(&db_path_price) {
                         Ok(c) => c,
@@ -288,8 +362,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     };
                     
-                    if let Err(e) = dexscreener::upsert_metadata(&conn, &metadata) {
-                        error!("❌ Failed to update metadata for {}: {}", mint, e);
+                    if let Err(e) = dexscreener::upsert_price(&conn, &price) {
+                        warn!("⚠️  Failed to write price for {}: {}", mint, e);
+                        error_count += 1;
+                    } else {
+                        updated_count += 1;
                     }
                 } // Connection dropped here
                 
@@ -297,9 +374,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let sleep_ms = 300 + (rand::random::<u64>() % 300);
                 tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
             }
+            
+            if updated_count > 0 || error_count > 0 {
+                info!("📊 Price update cycle complete: {} updated, {} errors", updated_count, error_count);
+            }
         }
     });
-    info!("   ├─ ✅ Price monitoring task spawned (60s interval)");
+    info!("   ├─ ✅ Price update task spawned (60s interval)");
 
     // Task 4: Persistence Scoring Engine (Phase 2 - every 60s)
     let db_path_scorer = config.db_path.clone();
@@ -333,7 +414,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("   ├─ Pruning: READY (threshold: {}s)", prune_threshold);
     info!("   ├─ Price Monitoring: READY (60s interval)");
     info!("   ├─ Persistence Scoring: READY (60s interval)");
-    info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
+    if config.use_unified_streamer {
+        info!("   └─ Streamers: 1 unified (PumpFun, PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
+    } else {
+        info!("   └─ Streamers: 4 active (PumpSwap, BonkSwap, Moonshot, JupiterDCA)");
+    }
     info!("");
     info!("🔄 Press CTRL+C to shutdown gracefully");
 
