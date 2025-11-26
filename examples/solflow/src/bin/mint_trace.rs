@@ -19,6 +19,7 @@
 //!
 //! ```bash
 //! cargo run --bin mint_trace -- --mint <MINT_ADDRESS>
+//! cargo run --bin mint_trace -- --mint <MINT_ADDRESS> --log-file mint_trace.log
 //! ```
 //!
 //! ## Environment Variables
@@ -51,9 +52,11 @@ use carbon_log_metrics::LogMetrics;
 use dotenv::dotenv;
 use solana_pubkey::Pubkey;
 use solana_transaction_status::TransactionStatusMeta;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use yellowstone_grpc_proto::geyser::CommitmentLevel;
 
@@ -66,10 +69,71 @@ use solflow::streamer_core::{
     grpc_client::create_single_account_client,
 };
 
+/// Logger helper for writing to console and/or file
+///
+/// Supports two modes:
+/// - Console-only: All output goes to stdout
+/// - File mode: All output goes to both console and file (with BufWriter for performance)
+#[derive(Clone)]
+struct Logger {
+    file_writer: Option<Arc<Mutex<BufWriter<std::fs::File>>>>,
+}
+
+impl Logger {
+    /// Create a console-only logger
+    fn console_only() -> Self {
+        Self { file_writer: None }
+    }
+
+    /// Create a logger that writes to both console and file
+    fn with_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        
+        let writer = BufWriter::new(file);
+        
+        Ok(Self {
+            file_writer: Some(Arc::new(Mutex::new(writer))),
+        })
+    }
+
+    /// Log a single line to console and file (if enabled)
+    fn log_line(&self, line: &str) {
+        // Always print to console
+        println!("{}", line);
+
+        // If file writer is enabled, also write to file
+        if let Some(ref writer_arc) = self.file_writer {
+            if let Ok(mut writer) = writer_arc.lock() {
+                let _ = writeln!(writer, "{}", line);
+            }
+        }
+    }
+
+    /// Log multiple lines (used for complex blocks)
+    fn log_block(&self, lines: Vec<String>) {
+        for line in lines {
+            self.log_line(&line);
+        }
+    }
+
+    /// Flush the file buffer after each transaction block
+    fn flush(&self) {
+        if let Some(ref writer_arc) = self.file_writer {
+            if let Ok(mut writer) = writer_arc.lock() {
+                let _ = writer.flush();
+            }
+        }
+    }
+}
+
 /// Command-line configuration for mint tracing
 #[derive(Clone)]
 struct MintTraceConfig {
     target_mint: String,
+    log_file_path: Option<String>,
     geyser_url: String,
     geyser_token: Option<String>,
     commitment_level: CommitmentLevel,
@@ -84,11 +148,17 @@ impl MintTraceConfig {
             .windows(2)
             .find(|w| w[0] == "--mint")
             .map(|w| w[1].clone())
-            .ok_or("Missing --mint argument. Usage: mint_trace --mint <MINT_ADDRESS>")?;
+            .ok_or("Missing --mint argument. Usage: mint_trace --mint <MINT_ADDRESS> [--log-file <PATH>]")?;
 
         // Validate mint address is valid base58
         let _ = Pubkey::try_from(target_mint.as_str())
             .map_err(|_| format!("Invalid mint address: {}", target_mint))?;
+
+        // Parse optional --log-file argument
+        let log_file_path = args
+            .windows(2)
+            .find(|w| w[0] == "--log-file")
+            .map(|w| w[1].clone());
 
         let geyser_url = std::env::var("GEYSER_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:10000".to_string());
@@ -108,6 +178,7 @@ impl MintTraceConfig {
 
         Ok(Self {
             target_mint,
+            log_file_path,
             geyser_url,
             geyser_token,
             commitment_level,
@@ -121,14 +192,16 @@ struct MintTraceProcessor {
     target_mint: String,
     match_count: Arc<AtomicU64>,
     total_count: Arc<AtomicU64>,
+    logger: Logger,
 }
 
 impl MintTraceProcessor {
-    fn new(target_mint: String) -> Self {
+    fn new(target_mint: String, logger: Logger) -> Self {
         Self {
             target_mint,
             match_count: Arc::new(AtomicU64::new(0)),
             total_count: Arc::new(AtomicU64::new(0)),
+            logger,
         }
     }
 
@@ -157,7 +230,7 @@ impl MintTraceProcessor {
         mints
     }
 
-    /// Print comprehensive transaction details
+    /// Print comprehensive transaction details using the logger
     fn print_transaction_details(
         &self,
         metadata: &Arc<carbon_core::transaction::TransactionMetadata>,
@@ -166,39 +239,40 @@ impl MintTraceProcessor {
     ) {
         let match_num = self.match_count.load(Ordering::Relaxed);
 
-        println!("\n╔═══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║ MINT MATCH #{:<67} ║", match_num);
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
-        println!("║ Target Mint: {:<63} ║", self.target_mint);
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line("");
+        self.logger.log_line("╔═══════════════════════════════════════════════════════════════════════════════╗");
+        self.logger.log_line(&format!("║ MINT MATCH #{:<67} ║", match_num));
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line(&format!("║ Target Mint: {:<63} ║", self.target_mint));
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
 
         // Transaction metadata
-        println!("║ 📊 TRANSACTION METADATA                                                       ║");
-        println!("║ Slot:        {:>63} ║", metadata.slot);
-        println!("║ Signature:   {:<63} ║", metadata.signature);
-        println!("║ Fee Payer:   {:<63} ║", metadata.fee_payer);
+        self.logger.log_line("║ 📊 TRANSACTION METADATA                                                       ║");
+        self.logger.log_line(&format!("║ Slot:        {:>63} ║", metadata.slot));
+        self.logger.log_line(&format!("║ Signature:   {:<63} ║", metadata.signature));
+        self.logger.log_line(&format!("║ Fee Payer:   {:<63} ║", metadata.fee_payer));
         if let Some(block_time) = metadata.block_time {
-            println!("║ Block Time:  {:>63} ║", block_time);
+            self.logger.log_line(&format!("║ Block Time:  {:>63} ║", block_time));
         }
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
 
         // All mints involved in this transaction
-        println!("║ 🪙 TOKEN MINTS ({:>2})                                                         ║", mints.len());
+        self.logger.log_line(&format!("║ 🪙 TOKEN MINTS ({:>2})                                                         ║", mints.len()));
         for (idx, mint) in mints.iter().enumerate() {
             let marker = if mint == &self.target_mint {
                 "→ TARGET"
             } else {
                 ""
             };
-            println!("║   {}. {:<58} {} ║", idx + 1, mint, marker);
+            self.logger.log_line(&format!("║   {}. {:<58} {} ║", idx + 1, mint, marker));
         }
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
 
         // Instruction tree
-        println!("║ 📋 INSTRUCTION TREE                                                           ║");
+        self.logger.log_line("║ 📋 INSTRUCTION TREE                                                           ║");
         let message = &metadata.message;
         let instructions = message.instructions();
-        println!("║   Total Instructions: {:<55} ║", instructions.len());
+        self.logger.log_line(&format!("║   Total Instructions: {:<55} ║", instructions.len()));
         
         for (idx, instruction) in instructions.iter().enumerate() {
             let program_id_index = instruction.program_id_index as usize;
@@ -207,26 +281,26 @@ impl MintTraceProcessor {
                 .map(|pk| pk.to_string())
                 .unwrap_or_else(|| "UNKNOWN".to_string());
 
-            println!("║   [{}] Outer Instruction                                                      ║", idx);
-            println!("║       Program:  {:<59} ║", program_id);
-            println!("║       Data Len: {:>3} bytes                                                    ║", instruction.data.len());
-            println!("║       Accounts: {:>3}                                                          ║", instruction.accounts.len());
+            self.logger.log_line(&format!("║   [{}] Outer Instruction                                                      ║", idx));
+            self.logger.log_line(&format!("║       Program:  {:<59} ║", program_id));
+            self.logger.log_line(&format!("║       Data Len: {:>3} bytes                                                    ║", instruction.data.len()));
+            self.logger.log_line(&format!("║       Accounts: {:>3}                                                          ║", instruction.accounts.len()));
 
             // Print discriminator if instruction data >= 8 bytes
             if instruction.data.len() >= 8 {
                 let discriminator = hex::encode(&instruction.data[0..8]);
-                println!("║       Discriminator: 0x{:<51} ║", discriminator);
+                self.logger.log_line(&format!("║       Discriminator: 0x{:<51} ║", discriminator));
             }
         }
 
         // Inner instructions
         if let Some(inner_groups) = &metadata.meta.inner_instructions {
-            println!("║                                                                               ║");
-            println!("║   Inner Instructions: {:<59} ║", inner_groups.len());
+            self.logger.log_line("║                                                                               ║");
+            self.logger.log_line(&format!("║   Inner Instructions: {:<59} ║", inner_groups.len()));
             
             for inner_group in inner_groups {
                 let outer_idx = inner_group.index as usize;
-                println!("║   [{}] Inner Group (from outer instruction {})                               ║", outer_idx, outer_idx);
+                self.logger.log_line(&format!("║   [{}] Inner Group (from outer instruction {})                               ║", outer_idx, outer_idx));
                 
                 for (inner_idx, inner) in inner_group.instructions.iter().enumerate() {
                     let program_id_index = inner.instruction.program_id_index as usize;
@@ -235,30 +309,30 @@ impl MintTraceProcessor {
                         .map(|pk| pk.to_string())
                         .unwrap_or_else(|| "UNKNOWN".to_string());
 
-                    println!("║       [{}.{}] Program:  {:<51} ║", outer_idx, inner_idx, program_id);
-                    println!("║             Data Len: {:>3} bytes                                          ║", inner.instruction.data.len());
+                    self.logger.log_line(&format!("║       [{}.{}] Program:  {:<51} ║", outer_idx, inner_idx, program_id));
+                    self.logger.log_line(&format!("║             Data Len: {:>3} bytes                                          ║", inner.instruction.data.len()));
                 }
             }
         }
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
 
         // Balance changes
         let sol_deltas = extract_sol_changes(&metadata.meta, account_keys);
         let token_deltas = extract_token_changes(&metadata.meta, account_keys);
 
-        println!("║ 💰 BALANCE CHANGES                                                            ║");
-        println!("║   SOL Changes: {:<63} ║", sol_deltas.len());
+        self.logger.log_line("║ 💰 BALANCE CHANGES                                                            ║");
+        self.logger.log_line(&format!("║   SOL Changes: {:<63} ║", sol_deltas.len()));
         for delta in &sol_deltas {
             let direction = if delta.is_inflow() { "+" } else { "-" };
             let account = account_keys
                 .get(delta.account_index)
                 .map(|pk| pk.to_string())
                 .unwrap_or_else(|| "UNKNOWN".to_string());
-            println!("║     {} {:<8.6} SOL | {:<52} ║", direction, delta.abs_ui_change(), account);
+            self.logger.log_line(&format!("║     {} {:<8.6} SOL | {:<52} ║", direction, delta.abs_ui_change(), account));
         }
 
-        println!("║                                                                               ║");
-        println!("║   Token Changes: {:<60} ║", token_deltas.len());
+        self.logger.log_line("║                                                                               ║");
+        self.logger.log_line(&format!("║   Token Changes: {:<60} ║", token_deltas.len()));
         for delta in &token_deltas {
             let direction = if delta.is_inflow() { "+" } else { "-" };
             let marker = if delta.mint == self.target_mint {
@@ -271,29 +345,32 @@ impl MintTraceProcessor {
                 .map(|pk| pk.to_string())
                 .unwrap_or_else(|| "UNKNOWN".to_string());
             
-            println!("║     {} {:<12.2} tokens (decimals: {})                                   ║", 
-                direction, delta.abs_ui_change(), delta.decimals);
-            println!("║       Mint:    {:<58} {} ║", delta.mint, marker);
-            println!("║       Account: {:<59} ║", account);
+            self.logger.log_line(&format!("║     {} {:<12.2} tokens (decimals: {})                                   ║", 
+                direction, delta.abs_ui_change(), delta.decimals));
+            self.logger.log_line(&format!("║       Mint:    {:<58} {} ║", delta.mint, marker));
+            self.logger.log_line(&format!("║       Account: {:<59} ║", account));
         }
 
-        println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
+        self.logger.log_line("╠═══════════════════════════════════════════════════════════════════════════════╣");
 
         // Transaction status
         let fee = metadata.meta.fee;
         let success = metadata.meta.status.is_ok();
         let status = if success { "✅ SUCCESS" } else { "❌ FAILED" };
 
-        println!("║ 📈 TRANSACTION STATUS                                                         ║");
-        println!("║   Status: {:<71} ║", status);
-        println!("║   Fee:    {:<71} lamports ║", fee);
+        self.logger.log_line("║ 📈 TRANSACTION STATUS                                                         ║");
+        self.logger.log_line(&format!("║   Status: {:<71} ║", status));
+        self.logger.log_line(&format!("║   Fee:    {:<71} lamports ║", fee));
 
         if let Err(ref err) = metadata.meta.status {
-            println!("║   Error:  {:<71} ║", err);
+            self.logger.log_line(&format!("║   Error:  {:<71} ║", err));
         }
 
-        println!("╚═══════════════════════════════════════════════════════════════════════════════╝");
-        println!();
+        self.logger.log_line("╚═══════════════════════════════════════════════════════════════════════════════╝");
+        self.logger.log_line("");
+        
+        // Flush the file buffer after each transaction block
+        self.logger.flush();
     }
 }
 
@@ -438,12 +515,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .target(env_logger::Target::Stderr)
     .init();
 
+    // Create logger based on configuration
+    let logger = if let Some(ref log_file) = config.log_file_path {
+        match Logger::with_file(log_file) {
+            Ok(l) => {
+                println!("📝 Logging to file: {}", log_file);
+                l
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to open log file '{}': {}", log_file, e);
+                return Err(e);
+            }
+        }
+    } else {
+        Logger::console_only()
+    };
+
     println!("\n╔═══════════════════════════════════════════════════════════════════════════════╗");
     println!("║                          MINT TRACE - Transaction Monitor                     ║");
     println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
     println!("║ Target Mint:  {:<67} ║", config.target_mint);
     println!("║ Geyser URL:   {:<67} ║", config.geyser_url);
     println!("║ Commitment:   {:<67} ║", format!("{:?}", config.commitment_level));
+    if let Some(ref log_file) = config.log_file_path {
+        println!("║ Log File:     {:<67} ║", log_file);
+    }
     println!("╠═══════════════════════════════════════════════════════════════════════════════╣");
     println!("║ This tool monitors ALL transactions involving the target mint address.       ║");
     println!("║ Press CTRL+C to stop.                                                         ║");
@@ -453,9 +549,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     log::info!("🎯 Target mint: {}", config.target_mint);
     log::info!("🔗 Geyser URL: {}", config.geyser_url);
     log::info!("📊 Commitment: {:?}", config.commitment_level);
+    if let Some(ref log_file) = config.log_file_path {
+        log::info!("📝 Log file: {}", log_file);
+    }
 
-    // Create processor
-    let processor = MintTraceProcessor::new(config.target_mint.clone());
+    // Create processor with logger
+    let processor = MintTraceProcessor::new(config.target_mint.clone(), logger);
 
     // Run with automatic reconnection
     run_with_reconnect(&config, processor).await?;

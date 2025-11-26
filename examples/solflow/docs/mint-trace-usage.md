@@ -54,14 +54,17 @@ export RUST_LOG="info"  # debug | info | warn | error
 ### 3. Run Against a Mint
 
 ```bash
-# Example: Monitor USDC transactions
+# Example: Monitor USDC transactions (console only)
 cargo run --release --bin mint_trace -- --mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 
-# Example: Monitor Wrapped SOL
+# Example: Monitor Wrapped SOL (console only)
 cargo run --release --bin mint_trace -- --mint So11111111111111111111111111111111111111112
 
-# Example: Monitor a trending token (replace with real mint)
-cargo run --release --bin mint_trace -- --mint <TRENDING_TOKEN_MINT>
+# Example: Monitor with log file (console + file)
+cargo run --release --bin mint_trace -- --mint <MINT> --log-file mint_trace.log
+
+# Example: Monitor trending token with log file
+cargo run --release --bin mint_trace -- --mint <TRENDING_TOKEN_MINT> --log-file /var/log/mint_trace.log
 ```
 
 ### 4. Stop Monitoring
@@ -70,11 +73,132 @@ Press `CTRL+C` to gracefully shutdown.
 
 ---
 
+## Log File Mode
+
+When `--log-file` is specified, the tool writes ALL transaction details to both the console and the specified file.
+
+### What Gets Logged
+
+The log file contains the complete, structured output for each matching transaction:
+
+✅ **Transaction Metadata**
+- Slot number
+- Transaction signature
+- Fee payer address
+- Block time (if available)
+
+✅ **Token Mints**
+- All mints involved in the transaction
+- TARGET marker for the monitored mint
+
+✅ **Complete Instruction Tree**
+- Outer (top-level) instructions with:
+  - Program ID
+  - Data length
+  - Account count
+  - Discriminator (first 8 bytes if available)
+- Inner (CPI) instructions with:
+  - Nested program IDs
+  - Data lengths
+  - Full nesting structure preserved
+
+✅ **Balance Changes**
+- SOL balance deltas (pre/post comparison)
+- Token balance deltas with:
+  - Mint addresses
+  - Decimals
+  - UI amounts
+  - Account addresses
+  - TARGET markers
+
+✅ **Transaction Status**
+- Success/failure status
+- Transaction fee
+- Error details (if failed)
+
+### File Format
+
+The log file uses the same formatted output as console display, preserving:
+- Box-drawing characters for visual structure
+- Indentation for instruction hierarchy
+- Markers (→ TARGET, ← TARGET) for mint identification
+- All numerical precision (SOL amounts, token decimals, etc.)
+
+### Example Usage Scenarios
+
+**Scenario 1: Audit Trail**
+```bash
+# Monitor high-value mint with persistent log
+cargo run --release --bin mint_trace -- \
+  --mint <HIGH_VALUE_MINT> \
+  --log-file /audit/mint_$(date +%Y%m%d).log
+```
+
+**Scenario 2: Background Monitoring with Real-Time Tailing**
+```bash
+# Terminal 1: Run mint_trace with log file
+cargo run --release --bin mint_trace -- \
+  --mint <MINT> \
+  --log-file mint_trace.log
+
+# Terminal 2: Tail the log file
+tail -f mint_trace.log
+```
+
+**Scenario 3: Long-Running Capture**
+```bash
+# Capture all activity for 24 hours
+timeout 86400 cargo run --release --bin mint_trace -- \
+  --mint <MINT> \
+  --log-file mint_capture_$(date +%Y%m%d_%H%M%S).log
+```
+
+**Scenario 4: Post-Processing Analysis**
+```bash
+# Run with log file, then analyze
+cargo run --release --bin mint_trace -- \
+  --mint <MINT> \
+  --log-file raw_data.log
+
+# Extract all signatures
+grep "Signature:" raw_data.log | awk '{print $2}'
+
+# Count transactions
+grep -c "MINT MATCH" raw_data.log
+
+# Find failed transactions
+grep -B 5 "❌ FAILED" raw_data.log
+```
+
+### Performance Considerations
+
+- **BufWriter**: The logger uses `BufWriter` for efficient file I/O
+- **Immediate Flush**: Each transaction block is flushed immediately after writing
+- **Append Mode**: File is opened in append mode (safe for restarts)
+- **Console Impact**: Writing to console is NOT affected by file logging (independent streams)
+
+### Safety Features
+
+- **Error Handling**: If file cannot be opened, tool exits with clear error message
+- **Append Mode**: Existing log files are preserved, new entries appended
+- **Flush After Each Transaction**: Data is safely written even if tool crashes
+- **No Buffering Issues**: Each complete transaction block is guaranteed to be written
+
+---
+
 ## Command-Line Options
 
 ### Required Arguments
 
 - `--mint <ADDRESS>` - Token mint address to monitor (base58-encoded Pubkey)
+
+### Optional Arguments
+
+- `--log-file <PATH>` - Log file path for detailed transaction auditing (optional)
+  - When provided, all transaction details are written to BOTH console and file
+  - File is opened in append mode (creates if doesn't exist)
+  - Each transaction block is flushed immediately for safety
+  - Includes complete instruction tree (outer + inner + nested CPIs)
 
 ### Environment Variables
 
