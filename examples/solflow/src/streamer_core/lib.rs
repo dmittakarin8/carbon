@@ -347,14 +347,26 @@ impl Processor for UnifiedTradeProcessor {
         let sol_deltas = extract_sol_changes(&metadata.meta, &account_keys);
         let token_deltas = extract_token_changes(&metadata.meta, &account_keys);
 
-        // STEP 3: Extract trade info (UNCHANGED)
-        if let Some(trade_info) = extract_trade_info(&sol_deltas, &token_deltas, &account_keys) {
+        // STEP 3: Extract ALL trades (MULTI-MINT SUPPORT)
+        let all_trades = crate::streamer_core::trade_detector::extract_all_trades(
+            &sol_deltas,
+            &token_deltas,
+            &account_keys,
+        );
+
+        // Early exit if no trades found
+        if all_trades.is_empty() {
+            return Ok(());
+        }
+
+        // STEP 4-6: Process each trade (one event per mint)
+        for trade_info in all_trades {
             // STEP 4: Blocklist check (UNCHANGED)
             if let Some(ref checker) = self.blocklist_checker {
                 match checker.is_blocked(&trade_info.mint) {
                     Ok(true) => {
                         log::debug!("🚫 Blocked token: {}", trade_info.mint);
-                        return Ok(());
+                        continue; // Skip this mint, process others
                     }
                     Ok(false) => {}
                     Err(e) => {
