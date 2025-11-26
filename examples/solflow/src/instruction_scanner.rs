@@ -86,6 +86,46 @@ impl InstructionScanner {
         }
     }
 
+    /// Check if a transaction is "pump-relevant" (contains any tracked program)
+    ///
+    /// This is a convenience method that returns a boolean indicating whether
+    /// the transaction involves any of the 5 tracked programs. It's used as
+    /// the unified detection mechanism for pump-ecosystem transactions.
+    ///
+    /// # Unified Detection
+    ///
+    /// A transaction is considered "pump-relevant" if it contains ANY of:
+    /// - PumpFun (token launches)
+    /// - PumpSwap (pump token swaps)
+    /// - BonkSwap (LetsBonk launchpad)
+    /// - Moonshot (Moonshot DEX)
+    /// - Jupiter DCA (DCA protocol)
+    ///
+    /// This includes matches in both outer (top-level) and inner (CPI) instructions.
+    ///
+    /// # Use Cases
+    ///
+    /// - Transaction filtering before balance extraction
+    /// - Logging/metrics (pump vs non-pump transactions)
+    /// - Early rejection of non-relevant transactions
+    ///
+    /// # Returns
+    ///
+    /// - `true` if transaction contains at least one tracked program
+    /// - `false` if no tracked programs found
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// if scanner.is_pump_relevant(&metadata) {
+    ///     // Process pump-relevant transaction
+    ///     let all_trades = extract_all_trades(...);
+    /// }
+    /// ```
+    pub fn is_pump_relevant(&self, metadata: &Arc<TransactionMetadata>) -> bool {
+        self.scan(metadata).is_some()
+    }
+
     /// Scan a transaction for any tracked program ID
     ///
     /// This method checks both outer (top-level) instructions and inner (CPI)
@@ -106,6 +146,10 @@ impl InstructionScanner {
     /// - Scanner is read-only (no mutation of TransactionMetadata)
     /// - Uses `build_full_account_keys()` to handle ALT resolution
     /// - Returns on first match for performance
+    ///
+    /// # See Also
+    ///
+    /// - `is_pump_relevant()` for simple boolean check
     pub fn scan(&self, metadata: &Arc<TransactionMetadata>) -> Option<InstructionMatch> {
         // Build complete account key list (static + ALT loaded addresses)
         let account_keys = build_full_account_keys(metadata, &metadata.meta);
