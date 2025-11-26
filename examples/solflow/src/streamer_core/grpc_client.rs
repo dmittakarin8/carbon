@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use yellowstone_grpc_proto::geyser::SubscribeRequestFilterTransactions;
+use yellowstone_grpc_proto::geyser::{CommitmentLevel, SubscribeRequestFilterTransactions};
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -80,6 +80,42 @@ pub async fn create_multi_program_client(
         config.geyser_url.clone(),
         config.x_token.clone(),
         Some(config.commitment_level),
+        HashMap::default(),
+        transaction_filters,
+        Default::default(),
+        Arc::new(RwLock::new(HashSet::new())),
+        Default::default(),
+    ))
+}
+
+/// Create gRPC client for monitoring a single account/mint address
+///
+/// This function creates a client that subscribes to ALL transactions involving
+/// a specific account address (typically a mint address for token monitoring).
+///
+/// Used by standalone tools like mint_trace for comprehensive transaction monitoring.
+pub async fn create_single_account_client(
+    geyser_url: &str,
+    x_token: Option<String>,
+    account_address: &str,
+    commitment_level: CommitmentLevel,
+) -> Result<YellowstoneGrpcGeyserClient, ClientError> {
+    let transaction_filter = SubscribeRequestFilterTransactions {
+        vote: Some(false),
+        failed: Some(false),
+        account_include: vec![],
+        account_exclude: vec![],
+        account_required: vec![account_address.to_string()],
+        signature: None,
+    };
+
+    let mut transaction_filters = HashMap::new();
+    transaction_filters.insert("account_filter".to_string(), transaction_filter);
+
+    Ok(YellowstoneGrpcGeyserClient::new(
+        geyser_url.to_string(),
+        x_token,
+        Some(commitment_level),
         HashMap::default(),
         transaction_filters,
         Default::default(),

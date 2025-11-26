@@ -36,6 +36,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 name = "grpc_verify"
 path = "src/bin/grpc_verify.rs"
 
+# Mint trace tool - comprehensive transaction monitoring for specific mint addresses
+[[bin]]
+name = "mint_trace"
+path = "src/bin/mint_trace.rs"
+
 # Legacy per-program streamers (DEPRECATED - use pipeline_runtime with unified mode)
 [[bin]]
 name = "pumpswap_streamer"
