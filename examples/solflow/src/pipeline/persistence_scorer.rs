@@ -76,7 +76,15 @@ impl PersistenceScorer {
         Self { db_path }
     }
 
-    /// Fetch active tokens from database (matches dashboard query for consistency)
+    /// Fetch active tokens from database with broadened inclusion criteria
+    ///
+    /// Selection logic (OR condition):
+    /// - Tokens with DCA activity in last hour (dca_buys_3600s > 0), OR
+    /// - Tokens with strong net flow trend (net_flow_300s_sol > 10.0)
+    ///
+    /// Always excludes blocked tokens via `mint_blocklist` check.
+    ///
+    /// Returns up to 100 tokens ordered by 5-minute net SOL flow (descending).
     fn fetch_active_tokens(&self, conn: &Connection) -> SqliteResult<Vec<TokenSnapshot>> {
         let mut stmt = conn.prepare(
             r#"
@@ -99,7 +107,7 @@ impl PersistenceScorer {
                 tm.pair_created_at
             FROM token_aggregates ta
             LEFT JOIN token_metadata tm ON ta.mint = tm.mint
-            WHERE ta.dca_buys_3600s > 0
+            WHERE (ta.dca_buys_3600s > 0 OR ta.net_flow_300s_sol > 10.0)
               AND (tm.blocked IS NULL OR tm.blocked = 0)
             ORDER BY ta.net_flow_300s_sol DESC
             LIMIT 100
